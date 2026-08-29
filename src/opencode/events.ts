@@ -18,7 +18,13 @@ export type RelevantEvent =
   | { kind: "idle"; sessionID: string }
   | { kind: "status"; sessionID: string; status: "idle" | "busy" | "retry" }
   | { kind: "question"; sessionID: string; requestID: string; raw: unknown }
-  | { kind: "question-replied"; sessionID: string; requestID: string }
+  | {
+      kind: "question-replied";
+      sessionID: string;
+      requestID: string;
+      /** Selected labels, one array per question in the request. */
+      answers: string[][];
+    }
   | { kind: "question-rejected"; sessionID: string; requestID: string }
   | { kind: "permission"; sessionID: string; requestID: string; permission: string; raw: unknown }
   | { kind: "error"; sessionID: string; raw: unknown }
@@ -67,7 +73,15 @@ export function classifyEvent(event: Event): RelevantEvent {
           : typeof props["id"] === "string"
             ? props["id"]
             : "";
-      return { kind: "question-replied", sessionID, requestID };
+      // The event carries the chosen labels directly — one array per question
+      // in the request — so a gate never has to query for the answer.
+      const raw = props["answers"];
+      const answers: string[][] = Array.isArray(raw)
+        ? raw.map((entry) =>
+            Array.isArray(entry) ? entry.filter((v): v is string => typeof v === "string") : [],
+          )
+        : [];
+      return { kind: "question-replied", sessionID, requestID, answers };
     }
 
     case "question.rejected":
