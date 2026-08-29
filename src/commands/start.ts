@@ -38,12 +38,12 @@ import { getStage, stageNumber, TOTAL_STAGES } from "../pipeline/stages.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { MODES, OPENCODE_CONFIG } from "../utils/constants.js";
+import { MODES, OPENCODE_CONFIG, PAPER_RUN_DIR } from "../utils/constants.js";
 import type { Mode } from "../utils/constants.js";
 import { PaperRunError, EXIT_CODES } from "../utils/errors.js";
 import { requireProjectRoot } from "../utils/paths.js";
 import { getCurrentBranch } from "../utils/git.js";
-import { log } from "../utils/logger.js";
+import { log, setLogFile } from "../utils/logger.js";
 
 export interface StartOptions {
   mode?: string;
@@ -57,6 +57,10 @@ export interface StartOptions {
 
 export async function startCommand(opts: StartOptions): Promise<void> {
   const projectDir = requireProjectRoot();
+
+  // Mirror everything to a file, so a run that is killed, backgrounded, or
+  // left overnight still leaves a readable trace of where it got to.
+  setLogFile(join(projectDir, PAPER_RUN_DIR, "run.log"));
 
   await assertRunnable(projectDir);
 
