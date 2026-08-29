@@ -8,3 +8,7 @@
 export { version } from "./version.js";
 export * from "./utils/errors.js";
 export * from "./utils/constants.js";
+export * from "./state/index.js";
+export * from "./harness/index.js";
+export * from "./opencode/index.js";
+export * from "./adapter/index.js";
