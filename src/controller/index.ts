@@ -1,2 +1,2 @@
-/** Controller module — pipeline orchestration. Implemented in M1-9. */
-export {};
+/** Controller module — pipeline orchestration. */
+export * from "./permissions.js";

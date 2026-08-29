@@ -1,7 +1,7 @@
 /**
  * paper-run gate plugin.
  *
- * Three small jobs that the agent markdown files cannot do on their own, because
+ * Two small jobs that the agent markdown files cannot do on their own, because
  * they need to run at moments between turns rather than inside a prompt.
  *
  * 1. **Shell environment.** Harness scripts want to know which stage and mode
@@ -9,17 +9,20 @@
  *    fragile; injecting it once here means `.agents/tools/*` can just read
  *    `$PAPER_RUN_STAGE`.
  *
- * 2. **Permission auto-approval.** The writing pipeline runs the same handful of
- *    harness validators dozens of times per run. Prompting for each one trains
- *    the user to approve reflexively, which is worse for safety than approving
- *    the narrow, known-safe set automatically. Everything outside that set is
- *    left alone and still asks. Note the deliberate asymmetry: this plugin only
- *    ever *allows* — it never denies, so it cannot silently tighten a permission
- *    the user configured.
- *
- * 3. **Gate visibility.** When the controller parks the run at a gate, the TUI
+ * 2. **Gate visibility.** When the controller parks the run at a gate, the TUI
  *    has no reason to surface it. A toast on session idle is the difference
  *    between a run that is waiting for you and a run that looks hung.
+ *
+ * Permission auto-approval deliberately does NOT live here. The `permission.ask`
+ * hook is declared in @opencode-ai/plugin but never dispatched by the runtime
+ * (verified against opencode 1.18.25: the hook name appears once, in its own
+ * type declaration, while every live hook such as `tool.execute.before` and
+ * `shell.env` appears at multiple dispatch sites). A handler here would
+ * type-check and silently never fire — the worst possible shape for a security
+ * control, since it looks like a guard while granting nothing.
+ *
+ * The controller does this instead, over the `permission.asked` *event*, which
+ * is real: see `src/controller/permissions.ts`.
  *
  * Installed by paper-run. Kept dependency-free (node:fs only).
  */
@@ -55,32 +58,6 @@ function readRun(directory: string): RunSnapshot | null {
     // A half-written run.json during a controller write is expected and harmless.
     return null
   }
-}
-
-/**
- * Bash commands safe to run unattended in a writing repo.
- *
- * Read-only inspection plus the harness's own validators and build. Deliberately
- * excludes anything that rewrites history, moves refs, or reaches the network:
- * `git commit`, `git push`, `git checkout`, `rm`, `curl`, and friends keep
- * asking.
- */
-const AUTO_APPROVED_BASH = [
-  /^python3\s+\.agents\/tools\/(check|paper)-[\w-]+\.py\b/,
-  /^bash\s+\.agents\/tools\/verify\.sh\b/,
-  /^\.\/\.agents\/tools\/verify\.sh\b/,
-  /^make\s+(pdf|diff|clean|check)\b/,
-  /^git\s+(status|diff|log|show|ls-files)\b/,
-]
-
-function isAutoApproved(command: string): boolean {
-  const normalized = command.trim()
-  // Only judge single commands. A chained, substituted, or multi-line command
-  // could smuggle anything past a prefix match — `git status\nrm -rf /` matches
-  // the git pattern but is two commands — so anything with a shell separator or
-  // a line break falls through to the normal prompt.
-  if (/[;&|`\n\r]|\$\(/.test(normalized)) return false
-  return AUTO_APPROVED_BASH.some((pattern) => pattern.test(normalized))
 }
 
 export const PaperRunGate: Plugin = async ({ client, directory }) => {
@@ -137,29 +114,6 @@ export const PaperRunGate: Plugin = async ({ client, directory }) => {
       }
 
       lastNotifiedGate = ""
-    },
-
-    /**
-     * Auto-approve the harness's own read-only and validation commands.
-     * Never denies — anything unrecognised falls through to the user.
-     */
-    "permission.ask": async (input, output) => {
-      if (input.type !== "bash") return
-
-      // `metadata.command` is the command actually about to run; `pattern` is
-      // only the config glob that matched it, and may be an array. Judge the
-      // real command whenever it is available.
-      const meta = input.metadata as { command?: unknown } | undefined
-      const command =
-        typeof meta?.command === "string"
-          ? meta.command
-          : typeof input.pattern === "string"
-            ? input.pattern
-            : ""
-
-      if (command !== "" && isAutoApproved(command)) {
-        output.status = "allow"
-      }
     },
 
     /**
