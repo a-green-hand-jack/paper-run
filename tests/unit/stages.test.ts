@@ -1,0 +1,524 @@
+/**
+ * Pipeline stage, prompt, and validator tests.
+ *
+ * The most valuable test here is the one that checks every skill path and
+ * check-script name against a real harness checkout: a typo in a skill path
+ * would send the agent to read a file that does not exist, and it would
+ * improvise instead of failing loudly.
+ */
+
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
+import {
+  STAGES,
+  getStage,
+  getNextStage,
+  remainingStages,
+  stageNumber,
+  TOTAL_STAGES,
+} from "../../src/pipeline/stages.js";
+import {
+  renderStagePrompt,
+  renderRemediationPrompt,
+  renderSummaryRequest,
+} from "../../src/pipeline/prompts.js";
+import { validateStage, hasNonEmptySection } from "../../src/pipeline/validators.js";
+import { PIPELINE_STAGES } from "../../src/state/gate-presets.js";
+import type { StageRecord } from "../../src/state/schema.js";
+
+/**
+ * A harness checkout, for cross-checking that every path we send the agent to
+ * actually exists. Set PAPER_RUN_HARNESS to point at one; CI clones the pinned
+ * tag. Without it these checks skip rather than fail, so a local run without
+ * network still works — but CI must have it, which `harness checkout presence`
+ * below enforces.
+ */
+const HARNESS_CHECKOUT = process.env.PAPER_RUN_HARNESS ?? "/tmp/awh";
+const hasHarness = existsSync(join(HARNESS_CHECKOUT, "AGENTS.md"));
+
+describe("harness checkout presence", () => {
+  it("is available when running in CI", () => {
+    // These path checks are the only thing standing between a typo'd skill
+    // path and an agent improvising because the file it was sent to read does
+    // not exist. Skipping them silently in CI would defeat the point.
+    if (!process.env.CI) return;
+    expect(
+      hasHarness,
+      `No harness checkout at ${HARNESS_CHECKOUT}. CI must clone agent-writing-harness.`,
+    ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Stage table
+// ---------------------------------------------------------------------------
+
+describe("stage definitions", () => {
+  it("covers every pipeline stage exactly once", () => {
+    expect(Object.keys(STAGES).sort()).toEqual([...PIPELINE_STAGES].sort());
+    expect(TOTAL_STAGES).toBe(13);
+  });
+
+  it("gives every stage an id matching its key", () => {
+    for (const [key, stage] of Object.entries(STAGES)) {
+      expect(stage.id).toBe(key);
+    }
+  });
+
+  it("gives every stage at least one required validator", () => {
+    // A stage with no required validator can silently produce nothing.
+    for (const stage of Object.values(STAGES)) {
+      const required = stage.validators.filter((v) => v.required);
+      expect(required.length, `${stage.id} has no required validator`).toBeGreaterThan(0);
+    }
+  });
+
+  it("gives every stage expected outputs and a non-trivial timeout", () => {
+    for (const stage of Object.values(STAGES)) {
+      expect(stage.expectedOutputs.length, `${stage.id}`).toBeGreaterThan(0);
+      expect(stage.timeoutMs, `${stage.id}`).toBeGreaterThanOrEqual(60_000);
+      expect(stage.retries, `${stage.id}`).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it("allows drafting the longest turn", () => {
+    const drafting = STAGES.canonical_drafting.timeoutMs;
+    for (const stage of Object.values(STAGES)) {
+      expect(stage.timeoutMs).toBeLessThanOrEqual(drafting);
+    }
+  });
+
+  it("leaves material assessment without a harness skill", () => {
+    // The harness has no sufficiency-assessment skill; this stage is ours.
+    expect(STAGES.material_assessment.harnessSkill).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Cross-check against the real harness
+// ---------------------------------------------------------------------------
+
+describe.skipIf(!hasHarness)("harness references (checked against a real checkout)", () => {
+  it("points every harnessSkill at a SKILL.md that exists", () => {
+    for (const stage of Object.values(STAGES)) {
+      if (!stage.harnessSkill) continue;
+      const path = join(HARNESS_CHECKOUT, stage.harnessSkill);
+      expect(existsSync(path), `${stage.id} -> ${stage.harnessSkill}`).toBe(true);
+    }
+  });
+
+  it("points every sidecar skill at a SKILL.md that exists", () => {
+    for (const stage of Object.values(STAGES)) {
+      for (const sidecar of stage.sidecarSkills ?? []) {
+        const path = join(HARNESS_CHECKOUT, sidecar);
+        expect(existsSync(path), `${stage.id} sidecar -> ${sidecar}`).toBe(true);
+      }
+    }
+  });
+
+  it("names only check scripts that exist", () => {
+    for (const stage of Object.values(STAGES)) {
+      for (const validator of stage.validators) {
+        if (validator.type !== "check_script") continue;
+        const path = join(HARNESS_CHECKOUT, ".agents", "tools", validator.script);
+        expect(existsSync(path), `${stage.id} -> ${validator.script}`).toBe(true);
+      }
+    }
+  });
+
+  it("references contracts that exist in the template", () => {
+    for (const stage of Object.values(STAGES)) {
+      for (const validator of stage.validators) {
+        if (validator.type !== "contract_section") continue;
+        const path = join(HARNESS_CHECKOUT, validator.contract);
+        expect(existsSync(path), `${stage.id} -> ${validator.contract}`).toBe(true);
+      }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sequencing
+// ---------------------------------------------------------------------------
+
+describe("sequencing", () => {
+  it("getStage returns the stage", () => {
+    expect(getStage("bootstrap").name).toBe("Bootstrap");
+  });
+
+  it("getStage throws for an unknown id rather than returning undefined", () => {
+    expect(() => getStage("nonsense")).toThrow(/Unknown pipeline stage/);
+  });
+
+  it("getNextStage walks the pipeline and ends with null", () => {
+    expect(getNextStage("bootstrap")?.id).toBe("material_assessment");
+    expect(getNextStage("paper_candidate")).toBeNull();
+  });
+
+  it("remainingStages re-runs an incomplete stage", () => {
+    const remaining = remainingStages("paper_positioning", false);
+    expect(remaining[0]?.id).toBe("paper_positioning");
+  });
+
+  it("remainingStages skips a completed stage", () => {
+    const remaining = remainingStages("paper_positioning", true);
+    expect(remaining[0]?.id).toBe("claim_evidence");
+  });
+
+  it("remainingStages is empty after the last stage completes", () => {
+    expect(remainingStages("paper_candidate", true)).toHaveLength(0);
+  });
+
+  it("stageNumber is 1-based", () => {
+    expect(stageNumber("bootstrap")).toBe(1);
+    expect(stageNumber("paper_candidate")).toBe(13);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Prompts
+// ---------------------------------------------------------------------------
+
+describe("renderStagePrompt", () => {
+  const baseCtx = { mode: "autonomous" as const, history: [] as StageRecord[] };
+
+  it("names the stage and its position", () => {
+    const prompt = renderStagePrompt(STAGES.canonical_drafting, baseCtx);
+    expect(prompt).toContain("Stage 7/13");
+    expect(prompt).toContain("Canonical drafting");
+  });
+
+  it("points at the owner skill and marks sidecars as sidecars", () => {
+    const prompt = renderStagePrompt(STAGES.canonical_drafting, baseCtx);
+    expect(prompt).toContain(".agents/skills/section-writing/SKILL.md");
+    expect(prompt).toContain("It owns this task");
+    expect(prompt).toContain("never instead of it");
+  });
+
+  it("says a stage is paper-run's own when it has no skill", () => {
+    const prompt = renderStagePrompt(STAGES.material_assessment, baseCtx);
+    expect(prompt).toContain("belongs to paper-run");
+  });
+
+  it("always carries the never-fabricate rule", () => {
+    for (const stage of Object.values(STAGES)) {
+      const prompt = renderStagePrompt(stage, baseCtx);
+      expect(prompt, `${stage.id}`).toMatch(/Never invent/i);
+    }
+  });
+
+  it("summarizes prior stages", () => {
+    const history: StageRecord[] = [
+      {
+        stage_id: "bootstrap",
+        status: "completed",
+        started_at: "2026-08-29T10:00:00.000Z",
+        completed_at: "2026-08-29T10:01:00.000Z",
+        commit_sha: "abc",
+      },
+    ];
+    const prompt = renderStagePrompt(STAGES.material_assessment, { ...baseCtx, history });
+    expect(prompt).toContain("Completed so far");
+    expect(prompt).toContain("bootstrap: completed");
+  });
+
+  it("elides a long history rather than listing every stage", () => {
+    const history: StageRecord[] = PIPELINE_STAGES.slice(0, 8).map((id) => ({
+      stage_id: id,
+      status: "completed" as const,
+      started_at: "2026-08-29T10:00:00.000Z",
+      completed_at: "2026-08-29T10:01:00.000Z",
+      commit_sha: "abc",
+    }));
+    const prompt = renderStagePrompt(STAGES.self_review, { ...baseCtx, history });
+    expect(prompt).toMatch(/…\d+ earlier stage\(s\) completed/);
+  });
+
+  it("tells the agent to mark gaps when materials are partial", () => {
+    const prompt = renderStagePrompt(STAGES.canonical_drafting, {
+      ...baseCtx,
+      materialVerdict: "partial",
+    });
+    expect(prompt).toContain("TODO(paper-run)");
+    expect(prompt).toContain("partial");
+  });
+
+  it("tells the agent to stop when materials are unusable", () => {
+    const prompt = renderStagePrompt(STAGES.canonical_drafting, {
+      ...baseCtx,
+      materialVerdict: "unusable",
+    });
+    expect(prompt).toContain("must not proceed");
+  });
+
+  it("adds no material section when materials are usable", () => {
+    const prompt = renderStagePrompt(STAGES.canonical_drafting, {
+      ...baseCtx,
+      materialVerdict: "usable",
+    });
+    expect(prompt).not.toContain("Material constraints");
+  });
+
+  it("distinguishes the two modes in the ground rules", () => {
+    const collab = renderStagePrompt(STAGES.paper_positioning, {
+      ...baseCtx,
+      mode: "collaborative",
+    });
+    const auto = renderStagePrompt(STAGES.paper_positioning, { ...baseCtx, mode: "autonomous" });
+
+    expect(collab).toContain("reviewing at gates");
+    expect(auto).toContain("not licence to");
+  });
+
+  it("prioritizes human guidance when present", () => {
+    const prompt = renderStagePrompt(STAGES.revision, {
+      ...baseCtx,
+      humanGuidance: "tighten the contribution claims",
+    });
+    expect(prompt).toContain("Guidance from the human");
+    expect(prompt).toContain("tighten the contribution claims");
+  });
+});
+
+describe("renderRemediationPrompt", () => {
+  it("names the failing checks specifically", () => {
+    const prompt = renderRemediationPrompt(STAGES.paper_positioning, {
+      mode: "autonomous",
+      history: [],
+      validationFailures: ["PAPER.md ## Paper identity is missing or empty"],
+    });
+    expect(prompt).toContain("validation failed");
+    expect(prompt).toContain("PAPER.md ## Paper identity");
+  });
+
+  it("tells the agent not to fake a passing check", () => {
+    const prompt = renderRemediationPrompt(STAGES.claim_evidence, {
+      mode: "autonomous",
+      history: [],
+      validationFailures: ["something failed"],
+    });
+    expect(prompt).toContain("instead of writing something that would make the check");
+  });
+});
+
+describe("renderSummaryRequest", () => {
+  it("asks for a short summary and no further work", () => {
+    const prompt = renderSummaryRequest(STAGES.story_outline);
+    expect(prompt).toContain("Story and outline");
+    expect(prompt).toContain("Do not do further work");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// hasNonEmptySection
+// ---------------------------------------------------------------------------
+
+describe("hasNonEmptySection", () => {
+  it("finds content under a heading", () => {
+    const md = "# Doc\n\n## Paper identity\n\nA paper about widgets.\n";
+    expect(hasNonEmptySection(md, "## Paper identity")).toBe(true);
+  });
+
+  it("is false when the heading is absent", () => {
+    expect(hasNonEmptySection("# Doc\n\n## Other\n\ntext\n", "## Paper identity")).toBe(false);
+  });
+
+  it("is false for an empty section", () => {
+    const md = "## Paper identity\n\n## Next section\n\ncontent\n";
+    expect(hasNonEmptySection(md, "## Paper identity")).toBe(false);
+  });
+
+  it("does not count a bare TODO placeholder as content", () => {
+    // A template section still saying TODO has not been filled in.
+    for (const placeholder of ["TODO", "TBD", "_(to be written)_", "(to be decided)"]) {
+      const md = `## Paper identity\n\n${placeholder}\n\n## Next\n`;
+      expect(hasNonEmptySection(md, "## Paper identity"), placeholder).toBe(false);
+    }
+  });
+
+  it("does not count an HTML comment as content", () => {
+    const md = "## Paper identity\n\n<!-- fill this in -->\n\n## Next\n";
+    expect(hasNonEmptySection(md, "## Paper identity")).toBe(false);
+  });
+
+  it("counts content that merely mentions TODO alongside real text", () => {
+    const md = "## Paper identity\n\nA paper about widgets. TODO: refine the title.\n";
+    expect(hasNonEmptySection(md, "## Paper identity")).toBe(true);
+  });
+
+  it("stops at the next same-level heading but not at a deeper one", () => {
+    const deeper = "## Paper identity\n\n### Sub\n\ncontent under sub\n";
+    expect(hasNonEmptySection(deeper, "## Paper identity")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// validateStage
+// ---------------------------------------------------------------------------
+
+describe("validateStage", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "paper-run-validate-"));
+    mkdirSync(join(tmpDir, ".paper-run"), { recursive: true });
+  });
+
+  afterEach(() => {
+    rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("fails a missing required file and reports why", async () => {
+    const stage = {
+      ...STAGES.bootstrap,
+      validators: [
+        {
+          type: "file_exists" as const,
+          path: "BRIEF.md",
+          minBytes: 32,
+          required: true,
+          message: "BRIEF.md is missing or empty",
+        },
+      ],
+    };
+
+    const result = await validateStage(stage, tmpDir);
+    expect(result.passed).toBe(false);
+    expect(result.failures).toContain("BRIEF.md is missing or empty");
+  });
+
+  it("passes a file that meets the size bar", async () => {
+    writeFileSync(join(tmpDir, "BRIEF.md"), "x".repeat(64));
+    const stage = {
+      ...STAGES.bootstrap,
+      validators: [
+        {
+          type: "file_exists" as const,
+          path: "BRIEF.md",
+          minBytes: 32,
+          required: true,
+          message: "missing",
+        },
+      ],
+    };
+
+    expect((await validateStage(stage, tmpDir)).passed).toBe(true);
+  });
+
+  it("fails a file that exists but is too small", async () => {
+    writeFileSync(join(tmpDir, "BRIEF.md"), "hi");
+    const stage = {
+      ...STAGES.bootstrap,
+      validators: [
+        {
+          type: "file_exists" as const,
+          path: "BRIEF.md",
+          minBytes: 32,
+          required: true,
+          message: "too small",
+        },
+      ],
+    };
+
+    expect((await validateStage(stage, tmpDir)).passed).toBe(false);
+  });
+
+  it("checks a contract section", async () => {
+    writeFileSync(join(tmpDir, "PAPER.md"), "## Paper identity\n\nA real paper.\n");
+    const stage = {
+      ...STAGES.paper_positioning,
+      validators: [
+        {
+          type: "contract_section" as const,
+          contract: "PAPER.md",
+          heading: "## Paper identity",
+          required: true,
+          message: "empty",
+        },
+      ],
+    };
+
+    expect((await validateStage(stage, tmpDir)).passed).toBe(true);
+  });
+
+  it("fails a state file that is not valid JSON", async () => {
+    writeFileSync(join(tmpDir, ".paper-run", "assessment.json"), "{not json");
+    const stage = {
+      ...STAGES.material_assessment,
+      validators: [
+        {
+          type: "state_file" as const,
+          file: "assessment.json",
+          required: true,
+          message: "assessment is unreadable",
+        },
+      ],
+    };
+
+    expect((await validateStage(stage, tmpDir)).passed).toBe(false);
+  });
+
+  it("passes a directory containing a large enough file", async () => {
+    mkdirSync(join(tmpDir, "paper", "sections"), { recursive: true });
+    writeFileSync(join(tmpDir, "paper", "sections", "01_intro.tex"), "x".repeat(300));
+
+    const stage = {
+      ...STAGES.canonical_drafting,
+      validators: [
+        {
+          type: "dir_has_content" as const,
+          dir: "paper/sections",
+          extension: ".tex",
+          minBytes: 200,
+          required: true,
+          message: "nothing drafted",
+        },
+      ],
+    };
+
+    expect((await validateStage(stage, tmpDir)).passed).toBe(true);
+  });
+
+  it("fails a directory whose files are all below the size bar", async () => {
+    mkdirSync(join(tmpDir, "paper", "sections"), { recursive: true });
+    writeFileSync(join(tmpDir, "paper", "sections", "01_intro.tex"), "% stub\n");
+
+    const stage = {
+      ...STAGES.canonical_drafting,
+      validators: [
+        {
+          type: "dir_has_content" as const,
+          dir: "paper/sections",
+          extension: ".tex",
+          minBytes: 200,
+          required: true,
+          message: "nothing drafted",
+        },
+      ],
+    };
+
+    expect((await validateStage(stage, tmpDir)).passed).toBe(false);
+  });
+
+  it("records an optional failure without blocking the stage", async () => {
+    const stage = {
+      ...STAGES.bootstrap,
+      validators: [
+        {
+          type: "file_exists" as const,
+          path: "nope.md",
+          required: false,
+          message: "advisory only",
+        },
+      ],
+    };
+
+    const result = await validateStage(stage, tmpDir);
+    expect(result.passed).toBe(true);
+    expect(result.failures).toHaveLength(0);
+    expect(result.checks[0]?.passed).toBe(false);
+  });
+});

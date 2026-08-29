@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Nightly, so drift in OpenCode or the harness template surfaces on its
+    # own rather than in someone's PR.
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: typecheck, build, unit
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run build
+
+      # The stage table names skill paths and check scripts inside the harness
+      # template. A typo there would send the agent to read a file that does
+      # not exist, so the tests cross-check every one against a real checkout.
+      - name: Clone agent-writing-harness (pinned)
+        run: |
+          git clone --depth 1 --branch v0.3.0 \
+            https://github.com/a-green-hand-jack/agent-writing-harness.git \
+            "$RUNNER_TEMP/agent-writing-harness"
+
+      - run: npm run test:unit
+        env:
+          PAPER_RUN_HARNESS: ${{ runner.temp }}/agent-writing-harness
+
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      # Harness validators are Python; without it every check script fails.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - run: npm ci
+      - run: npm run build
+
+      - name: Clone agent-writing-harness (pinned)
+        run: |
+          git clone --depth 1 --branch v0.3.0 \
+            https://github.com/a-green-hand-jack/agent-writing-harness.git \
+            "$RUNNER_TEMP/agent-writing-harness"
+
+      - run: npm run test:integration
+        env:
+          PAPER_RUN_HARNESS: ${{ runner.temp }}/agent-writing-harness
+
+  smoke:
+    name: smoke (real OpenCode)
+    # Needs credentials and spends tokens, so it does not run on every PR.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+
+      - name: Install OpenCode
+        run: |
+          curl -fsSL https://opencode.ai/install | bash
+          echo "$HOME/.opencode/bin" >> "$GITHUB_PATH"
+
+      - run: npm run test:smoke
+        env:
+          # Fail rather than skip: a smoke tier that silently skips is worse
+          # than no smoke tier, because it reports green either way.
+          PAPER_RUN_REQUIRE_SMOKE: "1"
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
