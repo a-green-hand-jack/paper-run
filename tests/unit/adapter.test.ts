@@ -24,6 +24,16 @@ import { OPENCODE_DIR, OPENCODE_CONFIG, PAPER_RUN_DIR, STATE_FILES } from "../..
 
 /** Every file the adapter must put into a writing repo, project-relative. */
 const EXPECTED_FILES = [
+  // Singular is what OpenCode 1.18.25 actually reads for agents and commands;
+  // plural is what the docs show. Both are installed, so the adapter works
+  // either way — an agent that never loads takes /status, /mode and /approve
+  // down with it, silently.
+  `${OPENCODE_DIR}/agent/paper-writer.md`,
+  `${OPENCODE_DIR}/agent/paper-reviewer.md`,
+  `${OPENCODE_DIR}/command/status.md`,
+  `${OPENCODE_DIR}/command/mode.md`,
+  `${OPENCODE_DIR}/command/approve.md`,
+  `${OPENCODE_DIR}/command/stage.md`,
   `${OPENCODE_DIR}/agents/paper-writer.md`,
   `${OPENCODE_DIR}/agents/paper-reviewer.md`,
   `${OPENCODE_DIR}/commands/status.md`,
@@ -51,7 +61,7 @@ describe("findTemplatesDir", () => {
   it("locates the shipped template tree", () => {
     const dir = findTemplatesDir();
     expect(existsSync(dir)).toBe(true);
-    expect(existsSync(join(dir, "agents", "paper-writer.md"))).toBe(true);
+    expect(existsSync(join(dir, "agent", "paper-writer.md"))).toBe(true);
   });
 });
 
@@ -121,7 +131,7 @@ describe("installAdapter", () => {
   it("creates the target directory when it does not exist", async () => {
     const nested = join(tmpDir, "does", "not", "exist");
     await installAdapter(nested);
-    expect(existsSync(join(nested, OPENCODE_DIR, "agents", "paper-writer.md"))).toBe(true);
+    expect(existsSync(join(nested, OPENCODE_DIR, "agent", "paper-writer.md"))).toBe(true);
   });
 });
 
@@ -258,9 +268,35 @@ describe("isAdapterInstalled", () => {
     expect(isAdapterInstalled(tmpDir)).toBe(false);
   });
 
+  it("installs agents and commands under both directory namings", async () => {
+    // Regression: OpenCode 1.18.25 loads project agents from the SINGULAR
+    // .opencode/agent/, while the docs show the plural form. Installing only
+    // the plural one meant `opencode agent list` never saw paper-writer, and
+    // /status, /mode and /approve silently did not exist — with no error
+    // anywhere, because a missing agent is not a failure, just an absence.
+    await installAdapter(tmpDir);
+
+    for (const name of ["paper-writer.md", "paper-reviewer.md"]) {
+      expect(existsSync(join(tmpDir, OPENCODE_DIR, "agent", name)), `agent/${name}`).toBe(true);
+      expect(existsSync(join(tmpDir, OPENCODE_DIR, "agents", name)), `agents/${name}`).toBe(true);
+    }
+    for (const name of ["status.md", "mode.md", "approve.md", "stage.md"]) {
+      expect(existsSync(join(tmpDir, OPENCODE_DIR, "command", name)), `command/${name}`).toBe(true);
+      expect(existsSync(join(tmpDir, OPENCODE_DIR, "commands", name)), `commands/${name}`).toBe(true);
+    }
+  });
+
+  it("keeps both copies of an agent identical", async () => {
+    await installAdapter(tmpDir, { model: "test/model" });
+    const singular = readFileSync(join(tmpDir, OPENCODE_DIR, "agent", "paper-writer.md"), "utf-8");
+    const plural = readFileSync(join(tmpDir, OPENCODE_DIR, "agents", "paper-writer.md"), "utf-8");
+    expect(singular).toBe(plural);
+    expect(singular).toContain("test/model");
+  });
+
   it("is false when the primary agent is missing", async () => {
     await installAdapter(tmpDir);
-    rmSync(join(tmpDir, OPENCODE_DIR, "agents", "paper-writer.md"));
+    rmSync(join(tmpDir, OPENCODE_DIR, "agent", "paper-writer.md"));
     expect(isAdapterInstalled(tmpDir)).toBe(false);
   });
 });

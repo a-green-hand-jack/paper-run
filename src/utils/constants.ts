@@ -87,4 +87,11 @@ export const OPENCODE_DEFAULTS = {
   startupTimeoutMs: 30_000,
   /** Default per-stage budget for an agent turn. */
   stageTimeoutMs: 10 * 60_000,
+  /**
+   * How long to allow a session to pick up a prompt before an idle status is
+   * read as "finished" rather than "not started yet". promptAsync returns
+   * before the agent begins, so without this the controller races past its
+   * own prompt.
+   */
+  startupGraceMs: 15_000,
 } as const;

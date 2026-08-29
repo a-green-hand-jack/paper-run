@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execaSync } from "execa";
@@ -192,6 +192,35 @@ describe("modeCommand", () => {
     const state = readRunState(tmpDir);
     expect(state.current_stage).toBe("paper_positioning");
     expect(state.stage_status).toBe("running");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Model availability
+// ---------------------------------------------------------------------------
+
+describe("configured model check", () => {
+  it("reads the model from the project config", async () => {
+    const { readConfiguredModel } = await import("../../src/commands/start.js");
+    writeFileSync(
+      join(tmpDir, "opencode.json"),
+      JSON.stringify({ model: "provider/some-model" }),
+    );
+    expect(readConfiguredModel(tmpDir)).toBe("provider/some-model");
+  });
+
+  it("returns null when there is no config or no model field", async () => {
+    const { readConfiguredModel } = await import("../../src/commands/start.js");
+    expect(readConfiguredModel(tmpDir)).toBeNull();
+
+    writeFileSync(join(tmpDir, "opencode.json"), JSON.stringify({ default_agent: "x" }));
+    expect(readConfiguredModel(tmpDir)).toBeNull();
+  });
+
+  it("returns null rather than throwing on malformed config", async () => {
+    const { readConfiguredModel } = await import("../../src/commands/start.js");
+    writeFileSync(join(tmpDir, "opencode.json"), "{ not json");
+    expect(readConfiguredModel(tmpDir)).toBeNull();
   });
 });
 

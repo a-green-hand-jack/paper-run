@@ -35,7 +35,10 @@ import { detectHarness } from "../harness/harness.js";
 import { isAdapterInstalled, installAdapter } from "../adapter/install.js";
 
 import { getStage, stageNumber, TOTAL_STAGES } from "../pipeline/stages.js";
-import { MODES } from "../utils/constants.js";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+
+import { MODES, OPENCODE_CONFIG } from "../utils/constants.js";
 import type { Mode } from "../utils/constants.js";
 import { PaperRunError, EXIT_CODES } from "../utils/errors.js";
 import { requireProjectRoot } from "../utils/paths.js";
@@ -208,6 +211,59 @@ async function assertRunnable(projectDir: string): Promise<void> {
   if (!isAdapterInstalled(projectDir)) {
     log.step("Installing the OpenCode adapter");
     await installAdapter(projectDir);
+  }
+
+  await assertModelAvailable(projectDir);
+}
+
+/**
+ * Fail early when the configured model cannot be reached.
+ *
+ * OpenCode accepts a prompt for an unavailable model and queues it silently:
+ * the message lands in the session, no assistant reply ever comes, and the
+ * cost stays zero. From the controller's side that is indistinguishable from
+ * an agent that did nothing, so every stage fails validation for a reason
+ * that has nothing to do with the writing. Catching it here turns a baffling
+ * stall into one clear sentence.
+ */
+async function assertModelAvailable(projectDir: string): Promise<void> {
+  const configured = readConfiguredModel(projectDir);
+  if (!configured) return;
+
+  let available: string[];
+  try {
+    const { execa } = await import("execa");
+    const { stdout } = await execa("opencode", ["models"], { reject: false });
+    available = stdout.split("\n").map((l) => l.trim()).filter(Boolean);
+  } catch {
+    // If the model list cannot be read, do not block the run on it.
+    return;
+  }
+
+  if (available.length === 0 || available.includes(configured)) return;
+
+  const provider = configured.split("/")[0] ?? configured;
+  const alternatives = available.slice(0, 5);
+
+  throw new PaperRunError(`The configured model is not available: ${configured}`, {
+    hint:
+      `No models from "${provider}" are reachable with your current OpenCode auth.\n` +
+      `  Available models include:\n${alternatives.map((m) => `    ${m}`).join("\n")}\n` +
+      `  Fix by either:\n` +
+      `    • authenticating that provider:  opencode auth login\n` +
+      `    • or setting "model" in ${projectDir}/opencode.json to one of the above`,
+  });
+}
+
+/** Read the `model` field from the project's opencode.json, if any. */
+export function readConfiguredModel(projectDir: string): string | null {
+  const path = join(projectDir, OPENCODE_CONFIG);
+  if (!existsSync(path)) return null;
+  try {
+    const config = JSON.parse(readFileSync(path, "utf-8")) as { model?: unknown };
+    return typeof config.model === "string" ? config.model : null;
+  } catch {
+    return null;
   }
 }
 

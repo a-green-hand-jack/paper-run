@@ -81,11 +81,11 @@ describe("init against the real template", () => {
     // --- adapter ---
     expect(isAdapterInstalled(target)).toBe(true);
     for (const file of [
-      ".opencode/agents/paper-writer.md",
-      ".opencode/agents/paper-reviewer.md",
-      ".opencode/commands/status.md",
-      ".opencode/commands/mode.md",
-      ".opencode/commands/approve.md",
+      ".opencode/agent/paper-writer.md",
+      ".opencode/agent/paper-reviewer.md",
+      ".opencode/command/status.md",
+      ".opencode/command/mode.md",
+      ".opencode/command/approve.md",
       ".opencode/plugins/gate-plugin.ts",
       "opencode.json",
     ]) {

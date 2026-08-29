@@ -30,6 +30,22 @@ import { log } from "../utils/logger.js";
 // Options and results
 // ---------------------------------------------------------------------------
 
+/**
+ * Directories that must be duplicated under a second name.
+ *
+ * OpenCode 1.18.25 loads project agents and commands from the SINGULAR
+ * `.opencode/agent/` and `.opencode/command/` — verified by `opencode agent
+ * list`, which does not see paper-writer until the singular directory exists.
+ * The published docs show the plural form, and plugins/tools genuinely are
+ * plural. Rather than bet on one reading, both names are written: a duplicate
+ * directory is harmless, whereas an agent that never loads takes the whole
+ * adapter down silently — no paper-writer, no /status, no /approve.
+ */
+const DIRECTORY_ALIASES: Record<string, string> = {
+  agent: "agents",
+  command: "commands",
+};
+
 /** Default model used by the adapter's agents when the caller does not pick one. */
 export const DEFAULT_MODEL = "anthropic/claude-sonnet-4-20250514";
 
@@ -209,6 +225,15 @@ export async function installAdapter(
 
     const wrote = writeTemplate(join(templatesDir, rel), target, values, force);
     (wrote ? installed : skipped).push(toPosix(relative(root, target)));
+
+    // Mirror agents and commands under their alternate directory name, so the
+    // adapter works whichever form this OpenCode build reads.
+    const alias = aliasFor(rel);
+    if (alias) {
+      const aliasTarget = join(root, OPENCODE_DIR, alias);
+      const aliasWrote = writeTemplate(join(templatesDir, rel), aliasTarget, values, force);
+      (aliasWrote ? installed : skipped).push(toPosix(relative(root, aliasTarget)));
+    }
   }
 
   if (ensureGitignore(root)) {
@@ -224,6 +249,16 @@ export async function installAdapter(
   return { installed, skipped };
 }
 
+/** Map a template path onto its alias directory, when it has one. */
+function aliasFor(rel: string): string | null {
+  const parts = toPosix(rel).split("/");
+  const head = parts[0];
+  if (!head) return null;
+  const alias = DIRECTORY_ALIASES[head];
+  if (!alias) return null;
+  return [alias, ...parts.slice(1)].join("/");
+}
+
 /**
  * True when `projectDir` already carries an adapter installation.
  *
@@ -233,7 +268,7 @@ export async function installAdapter(
 export function isAdapterInstalled(projectDir: string): boolean {
   const root = resolve(projectDir);
   return (
-    existsSync(join(root, OPENCODE_DIR, "agents", "paper-writer.md")) &&
+    existsSync(join(root, OPENCODE_DIR, "agent", "paper-writer.md")) &&
     existsSync(join(root, OPENCODE_CONFIG))
   );
 }

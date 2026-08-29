@@ -6,7 +6,7 @@
  * throw StateSchemaError on mismatch.
  */
 
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ZodType } from "zod";
@@ -140,10 +140,7 @@ export function writeSessionState(projectDir: string, session: SessionState): vo
 
 export function clearSessionState(projectDir: string): void {
   const path = statePath(projectDir, STATE_FILES.session);
-  if (existsSync(path)) {
-    const { unlinkSync } = require("node:fs") as typeof import("node:fs");
-    unlinkSync(path);
-  }
+  if (existsSync(path)) unlinkSync(path);
 }
 
 // ---------------------------------------------------------------------------

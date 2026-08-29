@@ -165,8 +165,19 @@ export async function* subscribeEvents(
 /**
  * Wait until the session goes idle.
  *
- * Subscribes *before* checking current status, so a session that goes idle
- * between the two never leaves us waiting for an event that already passed.
+ * Two races have to be handled, in opposite directions:
+ *
+ *  - **Missing the transition.** If we checked status before subscribing, a
+ *    session that finished in between would leave us waiting for an event
+ *    that already passed. So the stream is primed first.
+ *
+ *  - **Idle because it has not started yet.** `promptAsync` returns as soon
+ *    as the prompt is accepted, before the agent begins working, so the
+ *    session is still idle for a moment afterwards. Treating that as "the
+ *    turn is over" makes the controller skip straight to validation while the
+ *    agent has not read a single word — the stage then fails for reasons that
+ *    have nothing to do with the work. `startedWithin` waits for the session
+ *    to actually pick the prompt up before idle counts as completion.
  */
 export async function waitForIdle(
   client: OpencodeClient,
@@ -176,12 +187,19 @@ export async function waitForIdle(
     timeoutMs?: number;
     stageId?: string;
     signal?: AbortSignal;
+    /**
+     * How long to allow for the session to start working before an idle
+     * status counts as "already finished". Set to 0 when resuming a turn
+     * that was already in flight.
+     */
+    startedWithinMs?: number;
     /** Called for every event seen while waiting (gates, permissions, …). */
     onEvent?: (event: RelevantEvent) => void | Promise<void>;
   },
 ): Promise<void> {
   const timeoutMs = opts.timeoutMs ?? OPENCODE_DEFAULTS.stageTimeoutMs;
   const stageId = opts.stageId ?? "unknown";
+  const startupGrace = opts.startedWithinMs ?? OPENCODE_DEFAULTS.startupGraceMs;
 
   const controller = new AbortController();
   const onAbort = () => controller.abort();
@@ -204,6 +222,18 @@ export async function waitForIdle(
     // between subscribe and check does not leave us waiting forever.
     const iterator = events[Symbol.asyncIterator]();
     const firstEvent = iterator.next();
+
+    // Give the session a chance to pick the prompt up. Without this, an idle
+    // reading here means "has not started", not "has finished".
+    if (startupGrace > 0) {
+      const started = await waitForBusy(client, opts.sessionId, opts.directory, startupGrace, controller.signal);
+      if (!started) {
+        log.debug(
+          `session ${opts.sessionId} never became busy within ${startupGrace}ms — treating as no work to do`,
+        );
+        return;
+      }
+    }
 
     const status = await getStatusSafely(client, opts.sessionId, opts.directory);
     if (status === "idle") {
@@ -234,6 +264,32 @@ export async function waitForIdle(
     opts.signal?.removeEventListener("abort", onAbort);
     controller.abort();
   }
+}
+
+/**
+ * Poll until the session reports busy, or the grace period expires.
+ *
+ * Returns false when it never started, which means there was nothing to wait
+ * for — either the prompt was rejected, or the agent had no work to do.
+ */
+async function waitForBusy(
+  client: OpencodeClient,
+  sessionId: string,
+  directory: string | undefined,
+  graceMs: number,
+  signal: AbortSignal,
+): Promise<boolean> {
+  const deadline = Date.now() + graceMs;
+  const interval = 100;
+
+  while (Date.now() < deadline) {
+    if (signal.aborted) return false;
+    const status = await getStatusSafely(client, sessionId, directory);
+    if (status !== "idle") return true;
+    await sleep(interval, signal);
+  }
+
+  return false;
 }
 
 async function getStatusSafely(

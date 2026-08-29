@@ -7,7 +7,7 @@
 
 import { Command } from "commander";
 
-import { PaperRunError, EXIT_CODES, log } from "./utils/index.js";
+import { PaperRunError, EXIT_CODES, log, setLogLevel } from "./utils/index.js";
 import { version } from "./version.js";
 
 import { initCommand } from "./commands/init.js";
@@ -19,10 +19,7 @@ const program = new Command()
   .version(version, "-V, --version")
   .option("--debug", "enable verbose output")
   .hook("preAction", (thisCommand) => {
-    if (thisCommand.opts().debug) {
-      const { setLogLevel } = require("./utils/logger.js") as typeof import("./utils/logger.js");
-      setLogLevel("debug");
-    }
+    if (thisCommand.opts().debug) setLogLevel("debug");
   });
 
 // --- init ---
