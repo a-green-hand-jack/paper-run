@@ -71,6 +71,9 @@ export interface InstallResult {
  */
 const SESSION_IGNORE_LINE = `${PAPER_RUN_DIR}/${STATE_FILES.session}`;
 
+/** Runtime-only paths a writing repo should never commit. */
+const IGNORE_LINES = [SESSION_IGNORE_LINE, `${PAPER_RUN_DIR}/run.log`];
+
 // ---------------------------------------------------------------------------
 // Locating the shipped templates
 // ---------------------------------------------------------------------------
@@ -173,24 +176,21 @@ function toPosix(path: string): string {
  */
 export function ensureGitignore(projectDir: string): boolean {
   const path = join(resolve(projectDir), ".gitignore");
+  const header = "# paper-run runtime state";
 
   if (!existsSync(path)) {
-    writeFileSync(path, `# paper-run ephemeral session state\n${SESSION_IGNORE_LINE}\n`);
+    writeFileSync(path, `${header}\n${IGNORE_LINES.join("\n")}\n`);
     return true;
   }
 
   const current = readFileSync(path, "utf-8");
-  const alreadyIgnored = current
-    .split("\n")
-    .some((line) => line.trim() === SESSION_IGNORE_LINE);
+  const present = new Set(current.split("\n").map((line) => line.trim()));
+  const missing = IGNORE_LINES.filter((line) => !present.has(line));
 
-  if (alreadyIgnored) return false;
+  if (missing.length === 0) return false;
 
   const separator = current === "" || current.endsWith("\n") ? "" : "\n";
-  writeFileSync(
-    path,
-    `${current}${separator}\n# paper-run ephemeral session state\n${SESSION_IGNORE_LINE}\n`,
-  );
+  writeFileSync(path, `${current}${separator}\n${header}\n${missing.join("\n")}\n`);
   return true;
 }
 

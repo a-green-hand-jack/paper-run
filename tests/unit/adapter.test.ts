@@ -213,11 +213,23 @@ describe("ensureGitignore", () => {
     expect(lines).toContain(SESSION_IGNORE_LINE);
   });
 
-  it("is a no-op when the line is already present", () => {
-    writeFileSync(join(tmpDir, ".gitignore"), `${SESSION_IGNORE_LINE}\n`);
+  it("is a no-op only when every ignore line is already present", () => {
+    // Both runtime paths must be covered before this is a no-op; a file that
+    // has only the older session line still needs run.log appended.
+    const complete = `${SESSION_IGNORE_LINE}\n${PAPER_RUN_DIR}/run.log\n`;
+    writeFileSync(join(tmpDir, ".gitignore"), complete);
 
     expect(ensureGitignore(tmpDir)).toBe(false);
-    expect(readFileSync(join(tmpDir, ".gitignore"), "utf-8")).toBe(`${SESSION_IGNORE_LINE}\n`);
+    expect(readFileSync(join(tmpDir, ".gitignore"), "utf-8")).toBe(complete);
+  });
+
+  it("tops up a .gitignore that predates the run log", () => {
+    writeFileSync(join(tmpDir, ".gitignore"), `${SESSION_IGNORE_LINE}\n`);
+
+    expect(ensureGitignore(tmpDir)).toBe(true);
+    const after = readFileSync(join(tmpDir, ".gitignore"), "utf-8");
+    expect(after).toContain(`${PAPER_RUN_DIR}/run.log`);
+    expect(after.split("\n").filter((l) => l.trim() === SESSION_IGNORE_LINE)).toHaveLength(1);
   });
 });
 
@@ -292,6 +304,29 @@ describe("isAdapterInstalled", () => {
     const plural = readFileSync(join(tmpDir, OPENCODE_DIR, "agents", "paper-writer.md"), "utf-8");
     expect(singular).toBe(plural);
     expect(singular).toContain("test/model");
+  });
+
+  it("ignores the run log as well as the session file", async () => {
+    // A long headless run mirrors its output to .paper-run/run.log so a run
+    // that dies overnight still leaves a trace. That file is runtime state
+    // and must not end up in the repository.
+    await installAdapter(tmpDir);
+    const ignored = readFileSync(join(tmpDir, ".gitignore"), "utf-8");
+    expect(ignored).toContain(`${PAPER_RUN_DIR}/${STATE_FILES.session}`);
+    expect(ignored).toContain(`${PAPER_RUN_DIR}/run.log`);
+  });
+
+  it("adds only the missing ignore lines on a repeat install", async () => {
+    writeFileSync(join(tmpDir, ".gitignore"), `${PAPER_RUN_DIR}/${STATE_FILES.session}\n`);
+    await installAdapter(tmpDir);
+
+    const ignored = readFileSync(join(tmpDir, ".gitignore"), "utf-8");
+    const sessionCount = ignored
+      .split("\n")
+      .filter((l) => l.trim() === `${PAPER_RUN_DIR}/${STATE_FILES.session}`).length;
+
+    expect(sessionCount).toBe(1);
+    expect(ignored).toContain(`${PAPER_RUN_DIR}/run.log`);
   });
 
   it("is false when the primary agent is missing", async () => {
