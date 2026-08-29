@@ -18,3 +18,4 @@ export {
 } from "./constants.js";
 export type { ContractName, TrailerKey, Mode } from "./constants.js";
 export { findProjectRoot, requireProjectRoot, isEmptyDir } from "./paths.js";
+export * from "./git.js";
