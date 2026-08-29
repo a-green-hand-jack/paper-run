@@ -6,6 +6,8 @@
  * reserved for machine-readable command output (e.g. `paper-run status --json`).
  */
 
+import { appendFileSync } from "node:fs";
+
 import chalk from "chalk";
 
 export type LogLevel = "debug" | "info" | "warn" | "error";
@@ -31,8 +33,35 @@ function enabled(level: LogLevel): boolean {
   return LEVEL_ORDER[level] >= LEVEL_ORDER[currentLevel];
 }
 
+/**
+ * A file every line is also appended to, when one is set.
+ *
+ * A long `--headless` run writes to stderr, which is easy to lose: piped
+ * output is buffered and disappears if the process is killed, and a run
+ * started in the background may have nowhere to write at all. Then a run that
+ * failed overnight leaves no trace of where it got to. Mirroring to a file
+ * inside the project means the transcript survives whatever happened to the
+ * terminal.
+ */
+let mirrorPath: string | null = null;
+
+/** Start mirroring log output to `path`, in addition to stderr. */
+export function setLogFile(path: string | null): void {
+  mirrorPath = path;
+}
+
 function write(line: string): void {
   process.stderr.write(`${line}\n`);
+
+  if (mirrorPath) {
+    try {
+      // Strip ANSI colours: the file is for reading later, not for a terminal.
+      const plain = line.replace(/\[[0-9;]*m/g, "");
+      appendFileSync(mirrorPath, `${new Date().toISOString()} ${plain}\n`);
+    } catch {
+      // A log that cannot be written must never take the run down with it.
+    }
+  }
 }
 
 export const log = {
