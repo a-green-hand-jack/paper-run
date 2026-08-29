@@ -6,7 +6,6 @@
  * and sees exactly what the controller is doing.
  */
 
-import { createOpencodeTui } from "@opencode-ai/sdk/v2";
 import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 
 import { OpencodeError } from "../utils/errors.js";
@@ -159,28 +158,3 @@ export async function showToast(
   }
 }
 
-/** A running TUI process. */
-export interface TuiHandle {
-  close(): void;
-}
-
-/**
- * Launch the native OpenCode TUI attached to `sessionId`.
- *
- * This is the whole point of the design: paper-run never renders a second
- * chat UI. The user reads and steers the run in OpenCode itself.
- */
-export function launchTui(opts: {
-  sessionId: string;
-  projectDir: string;
-  model?: string;
-  agent?: string;
-}): TuiHandle {
-  log.debug(`launching TUI for session ${opts.sessionId}`);
-  return createOpencodeTui({
-    project: opts.projectDir,
-    session: opts.sessionId,
-    ...(opts.model !== undefined ? { model: opts.model } : {}),
-    ...(opts.agent !== undefined ? { agent: opts.agent } : {}),
-  });
-}

@@ -11,9 +11,7 @@ import { PaperRunError, EXIT_CODES, log } from "./utils/index.js";
 import { version } from "./version.js";
 
 import { initCommand } from "./commands/init.js";
-import { startCommand } from "./commands/start.js";
-import { statusCommand } from "./commands/status.js";
-import { modeCommand } from "./commands/mode.js";
+import { startCommand, statusCommand, modeCommand } from "./commands/start.js";
 
 const program = new Command()
   .name("paper-run")
@@ -50,7 +48,8 @@ program
   .option("--stage <stage>", "start from a specific stage")
   .option("--port <port>", "OpenCode server port", parseInt)
   .option("--session <id>", "attach to an existing OpenCode session")
-  .option("--auto", "auto-approve all non-denied permissions")
+  .option("--headless", "run the pipeline without attaching a TUI")
+  .option("--model <model>", "model for the TUI session")
   .action(async (opts) => {
     await startCommand(opts);
   });
