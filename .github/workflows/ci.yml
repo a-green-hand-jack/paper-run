@@ -21,4 +21,15 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run build
+
+      # The stage table names skill paths and check scripts inside the harness
+      # template. A typo there would send the agent to read a file that does not
+      # exist, so the tests cross-check every one against a real checkout.
+      - name: Clone agent-writing-harness (pinned)
+        run: |
+          git clone --depth 1 --branch v0.3.0 \
+            https://github.com/a-green-hand-jack/agent-writing-harness.git \
+            "$RUNNER_TEMP/agent-writing-harness"
       - run: npm test
+        env:
+          PAPER_RUN_HARNESS: ${{ runner.temp }}/agent-writing-harness
