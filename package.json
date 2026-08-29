@@ -1,0 +1,74 @@
+{
+  "name": "paper-run",
+  "version": "0.1.0",
+  "description": "An OpenCode-native paper writing harness for autonomous and collaborative end-to-end manuscript production",
+  "type": "module",
+  "bin": {
+    "paper-run": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "templates",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src tests --ext .ts",
+    "lint:fix": "eslint src tests --ext .ts --fix",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:unit": "vitest run --project unit",
+    "test:integration": "vitest run --project integration",
+    "test:smoke": "vitest run --project smoke",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "opencode",
+    "paper",
+    "writing",
+    "latex",
+    "research",
+    "agent",
+    "harness"
+  ],
+  "author": "a-green-hand-jack",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/a-green-hand-jack/paper-run.git"
+  },
+  "bugs": {
+    "url": "https://github.com/a-green-hand-jack/paper-run/issues"
+  },
+  "homepage": "https://github.com/a-green-hand-jack/paper-run#readme",
+  "dependencies": {
+    "@opencode-ai/sdk": "^1.18.11",
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "execa": "^9.5.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@typescript-eslint/eslint-plugin": "^8.18.0",
+    "@typescript-eslint/parser": "^8.18.0",
+    "eslint": "^9.17.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
