@@ -12,3 +12,5 @@ export * from "./state/index.js";
 export * from "./harness/index.js";
 export * from "./opencode/index.js";
 export * from "./adapter/index.js";
+export * from "./pipeline/index.js";
+export * from "./controller/index.js";
