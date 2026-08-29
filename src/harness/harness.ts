@@ -165,11 +165,11 @@ export async function runVerify(dir: string, timeoutMs = 120_000): Promise<Verif
   }
 }
 
-/** Run paper-init.py with a subcommand. */
+/** Run paper-init.py with a subcommand: status | record-template-origin | clean. */
 export async function runPaperInit(
   dir: string,
-  subcommand: string,
-  extraArgs: string[] = [],
+  subcommand: "status" | "record-template-origin" | "clean",
+  opts: { commit?: boolean } = {},
 ): Promise<void> {
   const d = resolve(dir);
   const script = join(d, HARNESS.paperInit);
@@ -182,11 +182,23 @@ export async function runPaperInit(
   }
 
   await ensurePython();
-  await execa("python3", [script, subcommand, ...extraArgs], { cwd: d });
+
+  const args = [script, subcommand];
+  if (opts.commit) args.push("--commit");
+
+  await execa("python3", args, { cwd: d });
 }
 
-/** Run paper-brief.py ingest. */
-export async function runBriefIngest(dir: string, briefPath: string): Promise<void> {
+/**
+ * Validate a brief before ingesting it.
+ *
+ * Checks the brief has the required sections and a valid operating mode.
+ * Runs against the source path, so it works before the writing repo exists.
+ */
+export async function runBriefValidate(
+  dir: string,
+  briefPath: string,
+): Promise<CheckResult> {
   const d = resolve(dir);
   const script = join(d, HARNESS.paperBrief);
 
@@ -198,7 +210,49 @@ export async function runBriefIngest(dir: string, briefPath: string): Promise<vo
   }
 
   await ensurePython();
-  await execa("python3", [script, "ingest", "--source", briefPath], { cwd: d });
+
+  const result = await execa("python3", [script, "validate", "--brief", briefPath], {
+    cwd: d,
+    reject: false,
+  });
+
+  return {
+    exitCode: result.exitCode ?? 1,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    passed: result.exitCode === 0,
+    scriptName: "paper-brief.py validate",
+  };
+}
+
+/**
+ * Ingest a brief into an initialized writing repository.
+ *
+ * The harness copies it to BRIEF.md and fills only the decided PAPER.md fields
+ * that have a recognized target — it never invents a title, claim, venue, or
+ * author, and leaves anything undecided as unresolved.
+ */
+export async function runBriefIngest(
+  dir: string,
+  briefPath: string,
+  opts: { commit?: boolean } = {},
+): Promise<void> {
+  const d = resolve(dir);
+  const script = join(d, HARNESS.paperBrief);
+
+  if (!existsSync(script)) {
+    throw new MissingDependencyError(
+      HARNESS.paperBrief,
+      "paper-brief.py not found. The harness template may be incomplete.",
+    );
+  }
+
+  await ensurePython();
+
+  const args = [script, "ingest", "--brief", briefPath];
+  if (opts.commit) args.push("--commit");
+
+  await execa("python3", args, { cwd: d });
 }
 
 // ---------------------------------------------------------------------------

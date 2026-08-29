@@ -34,6 +34,10 @@ program
   .requiredOption("--brief <path>", "path to brief file or materials directory")
   .option("--mode <mode>", "initial operating mode (autonomous|collaborative)", "collaborative")
   .option("--template <version>", "harness template version", "v0.3.0")
+  .option("--repo <owner/name>", "GitHub repository to create from the template")
+  .option("--local", "fetch the template directly instead of creating a GitHub repository")
+  .option("--public", "create the GitHub repository public (default: private)")
+  .option("--model <model>", "model for the OpenCode adapter")
   .action(async (directory: string | undefined, opts) => {
     await initCommand(directory ?? ".", opts);
   });
