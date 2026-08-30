@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
 import {
@@ -23,6 +23,8 @@ import {
   clearSessionState,
   readAssessment,
   ensurePaperRunDir,
+  withStateLock,
+  stateLockPath,
 } from "../../src/state/store.js";
 import {
   generateGatePreset,
@@ -213,6 +215,56 @@ describe("store", () => {
       expect(updated.stage_status).toBe("completed");
       expect(updated.run_id).toBe(state.run_id);  // unchanged
       expect(updated.updated_at).not.toBe(state.updated_at);  // refreshed
+    });
+
+    it("holds an untracked lock for a mutation and releases it afterward", () => {
+      const state = makeRunState();
+      writeRunState(tmpDir, state);
+      const lockPath = stateLockPath(tmpDir);
+
+      expect(lockPath.startsWith(tmpDir + "/")).toBe(false);
+
+      withStateLock(tmpDir, (store) => {
+        expect(existsSync(lockPath)).toBe(true);
+        store.updateRunState({ stage_status: "completed" });
+      });
+
+      expect(existsSync(lockPath)).toBe(false);
+      expect(readRunState(tmpDir).stage_status).toBe("completed");
+    });
+
+    it("refuses a second state mutation while the repository lock is held", () => {
+      writeRunState(tmpDir, makeRunState());
+
+      withStateLock(tmpDir, () => {
+        expect(() => withStateLock(tmpDir, () => undefined, 0)).toThrow(/lock is held/);
+      });
+    });
+
+    it("keeps the lock until an asynchronous mutation boundary settles", async () => {
+      writeRunState(tmpDir, makeRunState());
+
+      await withStateLock(tmpDir, async (store) => {
+        await Promise.resolve();
+        expect(() => withStateLock(tmpDir, () => undefined, 0)).toThrow(/lock is held/);
+        store.updateRunState({ stage_status: "completed" });
+      });
+
+      expect(readRunState(tmpDir).stage_status).toBe("completed");
+      expect(existsSync(stateLockPath(tmpDir))).toBe(false);
+    });
+
+    it("recovers a lock whose owner process is dead", () => {
+      writeRunState(tmpDir, makeRunState());
+      const lockPath = stateLockPath(tmpDir);
+      mkdirSync(dirname(lockPath), { recursive: true });
+      writeFileSync(
+        lockPath,
+        JSON.stringify({ pid: 2_147_483_647, started: "proc:dead", token: "stale" }),
+      );
+
+      expect(updateRunState(tmpDir, { stage_status: "completed" }).stage_status).toBe("completed");
+      expect(existsSync(lockPath)).toBe(false);
     });
   });
 

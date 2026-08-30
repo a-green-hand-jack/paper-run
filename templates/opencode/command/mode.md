@@ -5,56 +5,17 @@ agent: paper-writer
 
 Switch the paper-run operating mode to: **$ARGUMENTS**
 
-Current gate policy:
-
-!`cat .paper-run/gate-policy.json 2>/dev/null || echo "MISSING: .paper-run/gate-policy.json"`
-
-Current operating mode block in PAPER.md:
-
-!`sed -n '/^## Operating mode/,/^## /p' PAPER.md 2>/dev/null | head -20`
-
 ## Steps
 
-**1. Validate the requested mode.**
+Validate that `$ARGUMENTS` is exactly `autonomous` or `collaborative`. If it is
+empty or invalid, report the two valid values and stop without running anything.
 
-It must be exactly `autonomous` or `collaborative`. If `$ARGUMENTS` is empty,
-report the current mode and the two valid values, then stop — do not guess. If it
-is anything else, say it is not a valid mode and stop without writing anything.
+Otherwise request the exact bash command `paper-run mode $ARGUMENTS`. Do not add
+arguments, shell operators, environment assignments, or wrappers. Do not use the
+`paper-run-state` tool. Do not edit `run.json`, `gate-policy.json`, or `PAPER.md` yourself.
+The bash permission request must be shown for explicit human approval; do not
+pre-approve or bypass it.
 
-**2. Update `.paper-run/gate-policy.json`.**
-
-Set `mode` to the new value and regenerate the gate defaults, **preserving any
-gate the user has customised**. A gate counts as customised when its current
-policy differs from what the *old* mode's preset would have given it; carry those
-forward untouched and apply the new mode's default to all the rest.
-
-The presets are:
-
-- **`autonomous`** — every stage is `auto`.
-- **`collaborative`** — `material_assessment`, `paper_positioning`,
-  `story_outline`, `canonical_drafting`, `independent_review`, and
-  `paper_candidate` are `await_human`; every other stage is `auto`.
-
-Keep `schema_version` as `paper-run-gate-policy-v1` and keep an entry for all
-thirteen stages.
-
-**3. Update `PAPER.md`.**
-
-In the `## Operating mode` section, set the `Mode:` value to the new mode. Change
-only that value — leave the rest of the section, and its collaboration cues,
-exactly as they are.
-
-**4. Report.**
-
-Tell the user:
-
-- the mode before and after;
-- which gates changed as a result, listed by stage id;
-- which gates were preserved as user customisations, if any;
-- **when it takes effect**: the switch applies at the *next* gate evaluation. A
-  stage already running finishes under the policy it started with, and a gate
-  already sitting in `gate_waiting` still needs `/approve`.
-
-Do not modify `run.json` — the controller owns the `mode` field there and will
-pick the change up from the gate policy. Do not start or resume any pipeline work
-as part of this command.
+After the approved command completes, report its result. The new mode applies at
+the next gate evaluation; a stage already running is unaffected. Do not start or
+resume pipeline work as part of this command.

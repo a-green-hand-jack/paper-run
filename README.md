@@ -17,17 +17,26 @@ npm install -g paper-run
 - [OpenCode](https://opencode.ai) ≥ 1.18.25
 - Python ≥ 3.10 (for harness validation scripts)
 - Git ≥ 2.30
-- [GitHub CLI](https://cli.github.com/) (`gh`)
+- [GitHub CLI](https://cli.github.com/) (`gh`), only when creating a GitHub repository
 
 ## Quick Start
 
 ```bash
-# Initialize a new paper writing repository
-paper-run init ~/papers/my-paper --brief ~/briefs/my-paper.md --mode autonomous
+# Initialize a local paper writing repository
+paper-run init ~/papers/my-paper --brief ~/briefs/my-paper.md --mode autonomous --local
 
 # Enter the repo and start the pipeline
 cd ~/papers/my-paper
 paper-run
+```
+
+To create a GitHub repository from the harness template instead, authenticate `gh` and pass
+the new repository name. Repositories are private unless `--public` is also supplied:
+
+```bash
+gh auth login
+paper-run init ~/papers/my-paper --brief ~/briefs/my-paper.md \
+  --mode autonomous --repo owner/my-paper
 ```
 
 ## Usage
@@ -40,6 +49,18 @@ paper-run mode [mode]         # Show or switch operating mode
 paper-run resume              # Resume from the last checkpoint
 paper-run checkpoint          # Force a checkpoint commit
 ```
+
+## Checkpoints and resume
+
+`paper-run` creates a Git checkpoint commit after each completed or blocked pipeline stage.
+Each checkpoint records the run, stage, status, mode, template version, and OpenCode session
+when one is available. Use `paper-run checkpoint` to create the same kind of checkpoint
+manually at the current pipeline position.
+
+Use `paper-run resume` after an interruption. It resumes the recorded run from its latest
+checkpoint and reuses the recorded OpenCode session when available. Completed stages are not
+repeated; a stage interrupted before its checkpoint is retried. `paper-run start` remains the
+normal way to start or continue a run.
 
 ## Modes
 

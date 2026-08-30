@@ -3,7 +3,8 @@
  *
  * One loop, thirteen stages, and no special cases per stage:
  *
- *     run -> wait for idle -> validate -> gate -> checkpoint -> advance
+ *     run -> wait for idle -> validate -> checkpoint waiting gates -> gate
+ *         -> checkpoint completion -> advance
  *
  * Everything stage-specific lives in the stage table; everything mode-specific
  * lives in the gate policy. What is left here is the part that has to be right
@@ -20,26 +21,36 @@
  * ## Every exit is resumable
  *
  * State is written before each risky step, not after it. If the process dies
- * anywhere in the loop, `.paper-run/run.json` plus the git log are enough to
- * work out where to pick up — an interrupted stage simply re-runs, which costs
- * a turn rather than losing work, because no checkpoint was committed for it.
+ * anywhere in the loop, the checkpoint at HEAD is enough to work out where to
+ * pick up. A validated stage waiting at a human gate resumes at that gate;
+ * other interrupted stages re-run because no checkpoint was committed for them.
  */
 
 import type { OpencodeClient } from "@opencode-ai/sdk/v2";
+import { isDeepStrictEqual } from "node:util";
+import { execa } from "execa";
 
 import {
   readRunState,
+  readGatePolicy,
   updateRunState,
+  withStateLock,
   readStageHistory,
   writeStageHistory,
 } from "../state/store.js";
-import type { GatePolicy, StageHistory, StageRecord } from "../state/schema.js";
+import { RunStateSchema, type GatePolicy, type StageHistory, type StageRecord } from "../state/schema.js";
 
 import { remainingStages, stageNumber, TOTAL_STAGES } from "../pipeline/stages.js";
 import type { Stage } from "../pipeline/stages.js";
 import { renderStagePrompt, renderRemediationPrompt } from "../pipeline/prompts.js";
-import { validateStage } from "../pipeline/validators.js";
-import type { ValidationResult } from "../pipeline/validators.js";
+import { capturePublicationBaseline, validateStage } from "../pipeline/validators.js";
+import type { PublicationBaseline, ValidationResult } from "../pipeline/validators.js";
+import {
+  captureLockedContractBaseline,
+  checkLockedContracts,
+  formatLockedContractFailure,
+} from "../pipeline/locked-contract.js";
+import type { LockedContractBaseline } from "../pipeline/locked-contract.js";
 import {
   renderAssessmentPrompt,
   discoverMaterials,
@@ -50,16 +61,17 @@ import {
 } from "../pipeline/material-assessment.js";
 import type { Verdict } from "../pipeline/material-assessment.js";
 
-import { sendPrompt, abortSession, showToast } from "../opencode/session.js";
+import { createSession, sendPrompt, abortSession, showToast } from "../opencode/session.js";
 import { waitForIdle } from "../opencode/events.js";
 import type { RelevantEvent } from "../opencode/events.js";
 
-import { commitCheckpoint, tagCandidate } from "../utils/git.js";
+import { checkDirtyState, commitCheckpoint, tagCandidate } from "../utils/git.js";
 import { StageTimeoutError, PaperRunError } from "../utils/errors.js";
 import { log } from "../utils/logger.js";
+import { PAPER_RUN_DIR, STATE_FILES } from "../utils/constants.js";
 
 import { evaluateGate } from "./gate.js";
-import type { GateDecision } from "./gate.js";
+import { gateActionFor, type GateDecision, type ResolvedGate } from "./gate.js";
 import { handlePermissionRequest } from "./permissions.js";
 import type { PermissionAskedPayload } from "./permissions.js";
 
@@ -82,6 +94,8 @@ export interface ControllerOptions {
   policy: GatePolicy;
   /** Agent to address stage prompts to. Defaults to the project's primary. */
   agent?: string;
+  /** Fully-qualified model override for stage prompts. */
+  model?: string;
   signal?: AbortSignal;
 }
 
@@ -94,10 +108,13 @@ export class PipelineController {
   private policy: GatePolicy;
   /** Verdict from the material assessment, once it has run. */
   private materialVerdict: Verdict | undefined;
+  /** Session currently running a turn, so an interrupt reaches cold reviews too. */
+  private activeSessionId: string;
 
   constructor(opts: ControllerOptions) {
     this.opts = opts;
     this.policy = opts.policy;
+    this.activeSessionId = opts.sessionId;
   }
 
   /** Run the pipeline from wherever the recorded state left off. */
@@ -130,7 +147,10 @@ export class PipelineController {
         return { status: "stopped", stageId: stage.id, reason };
       }
 
-      const outcome = await this.runStage(stage);
+      const outcome =
+        stage.id === state.current_stage && state.stage_status === "gate_waiting"
+          ? await this.resumeAtGate(stage)
+          : await this.runStage(stage);
 
       if (outcome.status === "interrupted") {
         return { status: "interrupted", stageId: stage.id };
@@ -158,6 +178,18 @@ export class PipelineController {
     });
 
     const startedAt = new Date().toISOString();
+    let contractBaseline: LockedContractBaseline;
+    let publicationBaseline: PublicationBaseline | undefined;
+    try {
+      contractBaseline = await captureLockedContractBaseline(this.opts.projectDir);
+      if (stage.id === "publication_build") {
+        publicationBaseline = capturePublicationBaseline(this.opts.projectDir);
+      }
+    } catch (err) {
+      const reason = `stage baseline unavailable at HEAD: ${describeError(err)}`;
+      await this.markBlocked(stage, reason);
+      return { status: "stopped", reason };
+    }
 
     // --- the agent's turn, plus any remediation rounds ---
     let validation: ValidationResult;
@@ -191,8 +223,11 @@ export class PipelineController {
 
       if (this.aborted()) return { status: "interrupted" };
 
+      const contractStop = await this.enforceLockedContracts(stage, contractBaseline);
+      if (contractStop) return contractStop;
+
       updateRunState(this.opts.projectDir, { stage_status: "validating" });
-      validation = await validateStage(stage, this.opts.projectDir);
+      validation = await validateStage(stage, this.opts.projectDir, { publicationBaseline });
 
       if (validation.passed) break;
 
@@ -210,12 +245,14 @@ export class PipelineController {
 
     // --- stage-specific post-processing ---
     if (stage.id === "material_assessment") {
-      const stop = await this.applyAssessment(stage, startedAt);
+      const stop = await this.applyAssessment(stage, startedAt, contractBaseline);
       if (stop) return stop;
     }
 
     // --- gate ---
-    const decision = await this.gate(stage, validation!);
+    const gateBoundary = await this.resolveGateBoundary(stage, contractBaseline);
+    if (gateBoundary.stop) return gateBoundary.stop;
+    const decision = await this.gate(stage, validation!, gateBoundary.resolved);
 
     if (decision.outcome === "stop") {
       await this.markBlocked(stage, decision.reason);
@@ -226,11 +263,21 @@ export class PipelineController {
       // The human wants changes: re-run this stage carrying their guidance.
       guidance = decision.guidance;
       log.step(`Revising "${stage.name}" per human guidance`);
-      return this.rerunAfterRevision(stage, guidance);
+      return this.rerunAfterRevision(stage, guidance, contractBaseline, publicationBaseline);
     }
 
     // --- checkpoint ---
-    const sha = await this.checkpoint(stage, "completed");
+    const contractStop = await this.enforceLockedContracts(stage, contractBaseline);
+    if (contractStop) return contractStop;
+    if (gateBoundary.resolved.action === "await_human") {
+      const mutationStop = await this.enforceNoPostGateMutation(stage);
+      if (mutationStop) return mutationStop;
+    }
+    const sha = await this.checkpoint(
+      stage,
+      "completed",
+      gateBoundary.resolved.action === "await_human",
+    );
     this.recordStage(stage, {
       status: "completed",
       started_at: startedAt,
@@ -258,6 +305,8 @@ export class PipelineController {
   private async rerunAfterRevision(
     stage: Stage,
     guidance: string | undefined,
+    contractBaseline: LockedContractBaseline,
+    publicationBaseline?: PublicationBaseline,
     depth = 1,
   ): Promise<{ status: "advanced" } | { status: "stopped"; reason: string } | { status: "interrupted" }> {
     const MAX_REVISIONS = 3;
@@ -283,24 +332,40 @@ export class PipelineController {
       throw err;
     }
 
-    const validation = await validateStage(stage, this.opts.projectDir);
+    const contractStop = await this.enforceLockedContracts(stage, contractBaseline);
+    if (contractStop) return contractStop;
+
+    const validation = await validateStage(stage, this.opts.projectDir, { publicationBaseline });
     if (!validation.passed) {
       const reason = `validation failed after revision: ${validation.failures.join("; ")}`;
       await this.markBlocked(stage, reason);
       return { status: "stopped", reason };
     }
 
-    const decision = await this.gate(stage, validation);
+    const gateBoundary = await this.resolveGateBoundary(stage, contractBaseline, true);
+    if (gateBoundary.stop) return gateBoundary.stop;
+    const decision = await this.gate(stage, validation, gateBoundary.resolved);
 
     if (decision.outcome === "stop") {
       await this.markBlocked(stage, decision.reason);
       return { status: "stopped", reason: decision.reason };
     }
     if (decision.outcome === "revise") {
-      return this.rerunAfterRevision(stage, decision.guidance, depth + 1);
+      return this.rerunAfterRevision(
+        stage,
+        decision.guidance,
+        contractBaseline,
+        publicationBaseline,
+        depth + 1,
+      );
     }
 
-    const sha = await this.checkpoint(stage, "completed");
+    const contractStopBeforeCheckpoint = await this.enforceLockedContracts(stage, contractBaseline);
+    if (contractStopBeforeCheckpoint) return contractStopBeforeCheckpoint;
+    const mutationStop = await this.enforceNoPostGateMutation(stage);
+    if (mutationStop) return mutationStop;
+
+    const sha = await this.checkpoint(stage, "completed", true);
     this.recordStage(stage, {
       status: "completed",
       started_at: startedAt,
@@ -317,6 +382,164 @@ export class PipelineController {
   // -------------------------------------------------------------------------
   // Pieces
   // -------------------------------------------------------------------------
+
+  /**
+   * Resume a validated output committed at a human gate without asking the
+   * writer to produce the stage again. HEAD is both the output and contract
+   * baseline; mutable run state and history are not evidence of advancement.
+   */
+  private async resumeAtGate(
+    stage: Stage,
+  ): Promise<{ status: "advanced" } | { status: "stopped"; reason: string } | { status: "interrupted" }> {
+    log.step(`Revalidating checkpoint before gate at "${stage.name}"`);
+    const startedAt = new Date().toISOString();
+    let contractBaseline: LockedContractBaseline;
+    try {
+      contractBaseline = await captureLockedContractBaseline(this.opts.projectDir);
+    } catch (err) {
+      const reason = `locked-contract baseline unavailable at HEAD: ${describeError(err)}`;
+      await this.markBlocked(stage, reason);
+      return { status: "stopped", reason };
+    }
+
+    updateRunState(this.opts.projectDir, { stage_status: "validating" });
+    const validation = await validateStage(stage, this.opts.projectDir);
+    if (!validation.passed) {
+      const reason = `checkpoint validation failed on resume: ${validation.failures.join("; ")}`;
+      await this.markBlocked(stage, reason);
+      return { status: "stopped", reason };
+    }
+
+    const contractStop = await this.enforceLockedContracts(stage, contractBaseline);
+    if (contractStop) return contractStop;
+    if (this.aborted()) return { status: "interrupted" };
+
+    // A gate_waiting checkpoint is authoritative. A later mode switch may
+    // affect future gates, but can never release this one.
+    const gateBoundary = await this.resolveGateBoundary(stage, contractBaseline, true, false);
+    if (gateBoundary.stop) return gateBoundary.stop;
+    const decision = await this.gate(stage, validation, gateBoundary.resolved);
+    if (decision.outcome === "stop") {
+      await this.markBlocked(stage, decision.reason);
+      return { status: "stopped", reason: decision.reason };
+    }
+    if (decision.outcome === "revise") {
+      log.step(`Revising "${stage.name}" per human guidance`);
+      return this.rerunAfterRevision(stage, decision.guidance, contractBaseline);
+    }
+
+    const contractStopBeforeCheckpoint = await this.enforceLockedContracts(stage, contractBaseline);
+    if (contractStopBeforeCheckpoint) return contractStopBeforeCheckpoint;
+    const mutationStop = await this.enforceNoPostGateMutation(stage);
+    if (mutationStop) return mutationStop;
+    const sha = await this.checkpoint(stage, "completed", true);
+    this.recordStage(stage, {
+      status: "completed",
+      started_at: startedAt,
+      completed_at: new Date().toISOString(),
+      commit_sha: sha,
+      validation_result: { passed: true, checks: validation.checks.map(toRecordCheck) },
+      ...(stage.id === "material_assessment" && this.materialVerdict
+        ? { material_verdict: this.materialVerdict }
+        : {}),
+    });
+    updateRunState(this.opts.projectDir, { stage_status: "completed" });
+    log.success(`${stage.name} complete (${sha.slice(0, 8)})`);
+    return { status: "advanced" };
+  }
+
+  /** Resolve policy/action once, checkpointing before an await_human gate. */
+  private async resolveGateBoundary(
+    stage: Stage,
+    contractBaseline: LockedContractBaseline,
+    forceHuman = false,
+    checkpoint = true,
+  ): Promise<{
+    resolved: ResolvedGate;
+    stop: { status: "stopped"; reason: string } | null;
+  }> {
+    const contractStop = await this.enforceLockedContracts(stage, contractBaseline);
+    if (contractStop) {
+      const policy = readGatePolicy(this.opts.projectDir);
+      return {
+        resolved: { policy, action: gateActionFor(policy, stage.id) },
+        stop: contractStop,
+      };
+    }
+
+    const resolved = await withStateLock(this.opts.projectDir, async (store) => {
+      const current = readGatePolicy(this.opts.projectDir);
+      const policy = forceHuman
+        ? {
+            ...current,
+            gates: { ...current.gates, [stage.id]: { policy: "await_human" as const } },
+          }
+        : current;
+      const boundary: ResolvedGate = { policy, action: gateActionFor(policy, stage.id) };
+
+      if (boundary.action === "await_human") {
+        store.updateRunState({ stage_status: "gate_waiting" });
+        if (checkpoint) await this.checkpoint(stage, "gate_waiting");
+      }
+      return boundary;
+    });
+    this.policy = resolved.policy;
+    return { resolved, stop: null };
+  }
+
+  private async enforceLockedContracts(
+    stage: Stage,
+    baseline: LockedContractBaseline,
+  ): Promise<{ status: "stopped"; reason: string } | null> {
+    const result = checkLockedContracts(this.opts.projectDir, baseline);
+    if (result.passed) return null;
+
+    const reason = formatLockedContractFailure(result);
+    await this.markBlocked(stage, reason);
+    return { status: "stopped", reason };
+  }
+
+  /** Refuse to sweep edits made after the validated waiting checkpoint. */
+  private async enforceNoPostGateMutation(
+    stage: Stage,
+  ): Promise<{ status: "stopped"; reason: string } | null> {
+    const dirty = await checkDirtyState(this.opts.projectDir);
+    const runPath = `${PAPER_RUN_DIR}/${STATE_FILES.run}`;
+    const changed = new Set([
+      ...dirty.stagedFiles,
+      ...dirty.unstagedFiles,
+      ...dirty.untrackedFiles,
+    ]);
+    changed.delete(runPath);
+    const runTransitionIsExact = await this.isExpectedPostGateRunTransition(runPath);
+    if (changed.size === 0 && runTransitionIsExact) return null;
+
+    if (!runTransitionIsExact) changed.add(runPath);
+
+    const reason =
+      "project changed after the validated gate checkpoint; refusing to commit without revalidation: " +
+      [...changed].sort().join(", ");
+    await this.markBlocked(stage, reason);
+    return { status: "stopped", reason };
+  }
+
+  private async isExpectedPostGateRunTransition(path: string): Promise<boolean> {
+    try {
+      const { stdout } = await execa("git", ["show", `HEAD:${path}`], {
+        cwd: this.opts.projectDir,
+      });
+      const baseline = RunStateSchema.parse(JSON.parse(stdout));
+      const current = readRunState(this.opts.projectDir);
+      if (baseline.stage_status !== "gate_waiting" || current.stage_status !== "approved") return false;
+      return isDeepStrictEqual(current, {
+        ...baseline,
+        stage_status: "approved",
+        updated_at: current.updated_at,
+      });
+    } catch {
+      return false;
+    }
+  }
 
   private buildStagePrompt(stage: Stage, guidance: string | undefined): string {
     if (stage.id === "material_assessment") {
@@ -336,21 +559,35 @@ export class PipelineController {
 
   /** Send a prompt and wait for the agent to finish, answering permissions meanwhile. */
   private async takeTurn(stage: Stage, prompt: string): Promise<void> {
-    await sendPrompt(this.opts.client, {
-      sessionId: this.opts.sessionId,
-      text: prompt,
-      directory: this.opts.projectDir,
-      ...(this.opts.agent ? { agent: this.opts.agent } : {}),
-    });
+    const review = stage.id === "independent_review";
+    const sessionId = review
+      ? await createSession(this.opts.client, {
+          title: `paper-run independent review: ${stage.id}`,
+          directory: this.opts.projectDir,
+        })
+      : this.opts.sessionId;
+    this.activeSessionId = sessionId;
 
-    await waitForIdle(this.opts.client, {
-      sessionId: this.opts.sessionId,
-      directory: this.opts.projectDir,
-      timeoutMs: stage.timeoutMs,
-      stageId: stage.id,
-      ...(this.opts.signal ? { signal: this.opts.signal } : {}),
-      onEvent: (event) => this.onEvent(event),
-    });
+    try {
+      await sendPrompt(this.opts.client, {
+        sessionId,
+        text: prompt,
+        directory: this.opts.projectDir,
+        ...(review ? { agent: "paper-reviewer" } : this.opts.agent ? { agent: this.opts.agent } : {}),
+        ...(this.opts.model ? { model: this.opts.model } : {}),
+      });
+
+      await waitForIdle(this.opts.client, {
+        sessionId,
+        directory: this.opts.projectDir,
+        timeoutMs: stage.timeoutMs,
+        stageId: stage.id,
+        ...(this.opts.signal ? { signal: this.opts.signal } : {}),
+        onEvent: (event) => this.onEvent(event),
+      });
+    } finally {
+      this.activeSessionId = this.opts.sessionId;
+    }
   }
 
   /**
@@ -368,8 +605,12 @@ export class PipelineController {
     });
   }
 
-  private async gate(stage: Stage, validation: ValidationResult): Promise<GateDecision> {
-    return evaluateGate(this.policy, {
+  private async gate(
+    stage: Stage,
+    validation: ValidationResult,
+    resolved: ResolvedGate,
+  ): Promise<GateDecision> {
+    return evaluateGate(resolved, {
       client: this.opts.client,
       sessionId: this.opts.sessionId,
       projectDir: this.opts.projectDir,
@@ -389,6 +630,7 @@ export class PipelineController {
   private async applyAssessment(
     stage: Stage,
     startedAt: string,
+    contractBaseline: LockedContractBaseline,
   ): Promise<{ status: "stopped"; reason: string } | null> {
     const outcome = evaluateAssessment(this.opts.projectDir);
     this.materialVerdict = outcome.verdict;
@@ -424,6 +666,8 @@ export class PipelineController {
 
     // Checkpoint the assessment itself: the judgement is part of the record
     // even though no manuscript work followed it.
+    const contractStop = await this.enforceLockedContracts(stage, contractBaseline);
+    if (contractStop) return contractStop;
     const sha = await this.checkpoint(stage, "blocked");
     this.recordStage(stage, {
       status: "blocked",
@@ -445,7 +689,11 @@ export class PipelineController {
     return { status: "stopped", reason: outcome.reason ?? "materials are unusable" };
   }
 
-  private async checkpoint(stage: Stage, status: "completed" | "blocked"): Promise<string> {
+  private async checkpoint(
+    stage: Stage,
+    status: "completed" | "blocked" | "gate_waiting",
+    postHumanGate = false,
+  ): Promise<string> {
     const state = readRunState(this.opts.projectDir);
 
     return commitCheckpoint(
@@ -457,6 +705,12 @@ export class PipelineController {
         templateVersion: state.template_version,
         ...(state.session_id ? { sessionId: state.session_id } : {}),
         ...(state.material_hash ? { materialHash: state.material_hash } : {}),
+        ...(postHumanGate
+          ? {
+              stageAll: false,
+              stagePaths: [`${PAPER_RUN_DIR}/${STATE_FILES.run}`],
+            }
+          : {}),
       },
       this.opts.projectDir,
     );
@@ -540,7 +794,7 @@ export class PipelineController {
 
   /** Stop the agent mid-turn. Used on the interrupt path. */
   async abort(): Promise<void> {
-    await abortSession(this.opts.client, this.opts.sessionId, this.opts.projectDir);
+    await abortSession(this.opts.client, this.activeSessionId, this.opts.projectDir);
   }
 }
 

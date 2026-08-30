@@ -16,7 +16,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readdirSync 
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { assertTargetUsable } from "../../src/commands/init.js";
+import { assertTargetUsable, INITIAL_STAGE_STATUS } from "../../src/commands/init.js";
 import { verifyTemplateTree } from "../../src/harness/template.js";
 import { DirectoryNotEmptyError, PaperRunError } from "../../src/utils/errors.js";
 import { PAPER_RUN_DIR } from "../../src/utils/constants.js";
@@ -137,6 +137,10 @@ describe("verifyTemplateTree", () => {
 // ---------------------------------------------------------------------------
 
 describe("init argument validation", () => {
+  it("initializes bootstrap as pending so first start runs it", () => {
+    expect(INITIAL_STAGE_STATUS).toBe("pending");
+  });
+
   it("rejects an unknown mode before doing any work", async () => {
     const { initCommand } = await import("../../src/commands/init.js");
     const target = join(tmpDir, "paper");

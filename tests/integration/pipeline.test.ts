@@ -24,12 +24,14 @@ import {
   writeRunState,
   readStageHistory,
   writeStageHistory,
+  writeGatePolicy,
   ensurePaperRunDir,
 } from "../../src/state/store.js";
 import type { RunState } from "../../src/state/schema.js";
 import { validateStage } from "../../src/pipeline/validators.js";
 import { STAGES } from "../../src/pipeline/stages.js";
 import { parseTrailers } from "../../src/utils/git.js";
+import { initializeHarnessTrust } from "../../src/harness/harness.js";
 
 import { makeTmpDir, cleanupTmp, makeWritingRepo, templateCache } from "./fixtures.js";
 
@@ -44,12 +46,14 @@ beforeAll(() => {
   templateCache();
 }, 180_000);
 
-beforeEach(() => {
+beforeEach(async () => {
   workspace = makeTmpDir();
   repo = join(workspace, "paper");
   makeWritingRepo(repo);
   ensurePaperRunDir(repo);
   writeStageHistory(repo, { schema_version: "paper-run-stage-history-v1", stages: [] });
+  writeGatePolicy(repo, generateGatePreset("autonomous"));
+  await initializeHarnessTrust(repo, "v0.3.0");
 });
 
 afterEach(() => {

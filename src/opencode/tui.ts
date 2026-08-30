@@ -40,8 +40,6 @@ export interface LaunchTuiOptions {
   serverUrl: string;
   sessionId: string;
   projectDir: string;
-  agent?: string;
-  model?: string;
 }
 
 /**
@@ -51,17 +49,7 @@ export interface LaunchTuiOptions {
  * quits, so anything paper-run writes must go to stderr and stay brief.
  */
 export function launchTui(opts: LaunchTuiOptions): TuiHandle {
-  const args = [
-    "attach",
-    opts.serverUrl,
-    "--session",
-    opts.sessionId,
-    "--dir",
-    opts.projectDir,
-  ];
-
-  if (opts.agent) args.push("--agent", opts.agent);
-  if (opts.model) args.push("--model", opts.model);
+  const args = buildTuiArgs(opts);
 
   log.debug(`launching TUI: opencode ${args.join(" ")}`);
 
@@ -73,6 +61,18 @@ export function launchTui(opts: LaunchTuiOptions): TuiHandle {
   });
 
   return makeHandle(child);
+}
+
+/** Build only arguments supported by `opencode attach` in OpenCode 1.18.25. */
+export function buildTuiArgs(opts: LaunchTuiOptions): string[] {
+  return [
+    "attach",
+    opts.serverUrl,
+    "--session",
+    opts.sessionId,
+    "--dir",
+    opts.projectDir,
+  ];
 }
 
 function makeHandle(child: ChildProcess): TuiHandle {

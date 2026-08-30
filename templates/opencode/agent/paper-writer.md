@@ -8,22 +8,13 @@ permission:
   glob: allow
   grep: allow
   list: allow
-  edit: allow
+  edit:
+    "*": allow
+    ".agents/**": deny
+    ".paper-run/**": deny
+    ".paper-run/assessment.json": allow
   webfetch: allow
-  bash:
-    "python3 .agents/*": allow
-    "bash .agents/tools/*": allow
-    "./.agents/tools/*": allow
-    "make *": allow
-    "git status*": allow
-    "git diff*": allow
-    "git log*": allow
-    "git show*": allow
-    "git add*": allow
-    "ls *": allow
-    "cat *": allow
-    "rg *": allow
-    "*": ask
+  bash: ask
 ---
 
 You are the primary writing agent for a **paper-run** manuscript pipeline. You do

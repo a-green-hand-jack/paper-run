@@ -3,13 +3,24 @@
  * invoke its scripts, and read paper contracts.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { execa } from "execa";
 
-import { HARNESS, CONTRACTS } from "../utils/constants.js";
+import { HARNESS, HARNESS_TRUST, CONTRACTS } from "../utils/constants.js";
 import type { ContractName } from "../utils/constants.js";
-import { MissingDependencyError } from "../utils/errors.js";
+import { HarnessTrustError, MissingDependencyError } from "../utils/errors.js";
 
 // ---------------------------------------------------------------------------
 // Template detection
@@ -68,6 +79,54 @@ export interface CheckResult {
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 
+interface HarnessTrustManifest {
+  schema_version: string;
+  template_version: string;
+  repository_id: string;
+  worktree_git_dir: string;
+  project_root: string;
+  root_device: number;
+  root_inode: number;
+  files: Array<{ path: string; sha256: string }>;
+}
+
+/** Establish local provenance once, during init, before any fetched script runs. */
+export async function initializeHarnessTrust(dir: string, templateVersion: string): Promise<void> {
+  const identity = await readGitIdentity(dir);
+  const trustDir = join(identity.commonDir, HARNESS_TRUST.directory);
+  const manifestPath = manifestFile(trustDir, identity.worktreeGitDir);
+  if (existsSync(manifestPath)) {
+    throw new HarnessTrustError("trust metadata already exists for this worktree");
+  }
+
+  const repositoryIdPath = join(identity.commonDir, HARNESS_TRUST.repositoryIdFile);
+  if (!existsSync(repositoryIdPath)) {
+    try {
+      writeFileSync(repositoryIdPath, `${randomUUID()}\n`, { encoding: "utf8", flag: "wx", mode: 0o600 });
+    } catch (err) {
+      if (!existsSync(repositoryIdPath)) throw err;
+    }
+  }
+  const repositoryId = readRepositoryId(repositoryIdPath);
+  const rootStat = statSync(identity.root);
+  const files = collectTrustedTools(identity.root);
+  const manifest: HarnessTrustManifest = {
+    schema_version: HARNESS_TRUST.schemaVersion,
+    template_version: templateVersion,
+    repository_id: repositoryId,
+    worktree_git_dir: identity.worktreeGitDir,
+    project_root: identity.root,
+    root_device: rootStat.dev,
+    root_inode: rootStat.ino,
+    files,
+  };
+
+  mkdirSync(trustDir, { recursive: true, mode: 0o700 });
+  const temporary = join(trustDir, `.${randomUUID()}.tmp`);
+  writeFileSync(temporary, `${JSON.stringify(manifest, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+  renameSync(temporary, manifestPath);
+}
+
 /** Run a single check script from .agents/tools/. */
 export async function runCheck(
   dir: string,
@@ -76,13 +135,14 @@ export async function runCheck(
   timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<CheckResult> {
   const d = resolve(dir);
-  const scriptPath = join(d, HARNESS.toolsDir, script);
-
-  if (!existsSync(scriptPath)) {
+  let scriptPath: string;
+  try {
+    scriptPath = await verifyTrustedHarnessScript(d, join(HARNESS.toolsDir, script));
+  } catch (err) {
     return {
-      exitCode: 127,
+      exitCode: 126,
       stdout: "",
-      stderr: `Script not found: ${scriptPath}`,
+      stderr: trustMessage(err),
       passed: false,
       scriptName: script,
     };
@@ -99,17 +159,16 @@ export async function runCheck(
 
     return {
       exitCode: result.exitCode ?? 1,
-      stdout: result.stdout,
-      stderr: result.stderr,
+      stdout: "",
+      stderr: result.exitCode === 0 ? "" : `${script} exited with code ${result.exitCode ?? 1}`,
       passed: result.exitCode === 0,
       scriptName: script,
     };
-  } catch (err: unknown) {
-    const msg = err instanceof Error ? err.message : String(err);
+  } catch {
     return {
       exitCode: 1,
       stdout: "",
-      stderr: msg,
+      stderr: `${script} could not be executed`,
       passed: false,
       scriptName: script,
     };
@@ -125,13 +184,14 @@ export interface VerifyResult {
 /** Run the master verification script (verify.sh). */
 export async function runVerify(dir: string, timeoutMs = 120_000): Promise<VerifyResult> {
   const d = resolve(dir);
-  const script = join(d, HARNESS.verifyScript);
-
-  if (!existsSync(script)) {
+  let script: string;
+  try {
+    script = await verifyTrustedHarnessScript(d, HARNESS.verifyScript);
+  } catch (err) {
     return {
       passed: false,
       checks: [],
-      summary: `verify.sh not found at ${script}`,
+      summary: trustMessage(err),
     };
   }
 
@@ -148,19 +208,19 @@ export async function runVerify(dir: string, timeoutMs = 120_000): Promise<Verif
       checks: [
         {
           exitCode: result.exitCode ?? 1,
-          stdout: result.stdout,
-          stderr: result.stderr,
+          stdout: "",
+          stderr: passed ? "" : `verify.sh exited with code ${result.exitCode ?? 1}`,
           passed,
           scriptName: "verify.sh",
         },
       ],
       summary: passed ? "All checks passed" : `verify.sh exited with code ${result.exitCode}`,
     };
-  } catch (err: unknown) {
+  } catch {
     return {
       passed: false,
       checks: [],
-      summary: err instanceof Error ? err.message : String(err),
+      summary: "verify.sh could not be executed",
     };
   }
 }
@@ -172,14 +232,7 @@ export async function runPaperInit(
   opts: { commit?: boolean } = {},
 ): Promise<void> {
   const d = resolve(dir);
-  const script = join(d, HARNESS.paperInit);
-
-  if (!existsSync(script)) {
-    throw new MissingDependencyError(
-      HARNESS.paperInit,
-      "The harness template was not properly initialized. Try re-running paper-run init.",
-    );
-  }
+  const script = await verifyTrustedHarnessScript(d, HARNESS.paperInit);
 
   await ensurePython();
 
@@ -200,14 +253,7 @@ export async function runBriefValidate(
   briefPath: string,
 ): Promise<CheckResult> {
   const d = resolve(dir);
-  const script = join(d, HARNESS.paperBrief);
-
-  if (!existsSync(script)) {
-    throw new MissingDependencyError(
-      HARNESS.paperBrief,
-      "paper-brief.py not found. The harness template may be incomplete.",
-    );
-  }
+  const script = await verifyTrustedHarnessScript(d, HARNESS.paperBrief);
 
   await ensurePython();
 
@@ -218,8 +264,11 @@ export async function runBriefValidate(
 
   return {
     exitCode: result.exitCode ?? 1,
-    stdout: result.stdout,
-    stderr: result.stderr,
+    stdout: "",
+    stderr:
+      result.exitCode === 0
+        ? ""
+        : `paper-brief.py validate exited with code ${result.exitCode ?? 1}`,
     passed: result.exitCode === 0,
     scriptName: "paper-brief.py validate",
   };
@@ -238,14 +287,7 @@ export async function runBriefIngest(
   opts: { commit?: boolean } = {},
 ): Promise<void> {
   const d = resolve(dir);
-  const script = join(d, HARNESS.paperBrief);
-
-  if (!existsSync(script)) {
-    throw new MissingDependencyError(
-      HARNESS.paperBrief,
-      "paper-brief.py not found. The harness template may be incomplete.",
-    );
-  }
+  const script = await verifyTrustedHarnessScript(d, HARNESS.paperBrief);
 
   await ensurePython();
 
@@ -312,6 +354,205 @@ export function extractCollaborationCues(
 // ---------------------------------------------------------------------------
 
 let pythonChecked = false;
+
+async function verifyTrustedHarnessScript(dir: string, projectPath: string): Promise<string> {
+  try {
+    return await verifyTrustedHarnessScriptUnchecked(dir, projectPath);
+  } catch (err) {
+    if (err instanceof HarnessTrustError) throw err;
+    throw new HarnessTrustError("trust verification failed");
+  }
+}
+
+async function verifyTrustedHarnessScriptUnchecked(dir: string, projectPath: string): Promise<string> {
+  const identity = await readGitIdentity(dir);
+  const rootStat = statSync(identity.root);
+  const trustDir = join(identity.commonDir, HARNESS_TRUST.directory);
+  const manifestPath = manifestFile(trustDir, identity.worktreeGitDir);
+  const repositoryIdPath = join(identity.commonDir, HARNESS_TRUST.repositoryIdFile);
+
+  let manifest: HarnessTrustManifest;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(manifestPath, "utf8"));
+    if (!isHarnessTrustManifest(parsed)) throw new Error("invalid manifest");
+    manifest = parsed;
+  } catch {
+    throw new HarnessTrustError("local trust manifest is missing or invalid");
+  }
+
+  if (
+    manifest.repository_id !== readRepositoryId(repositoryIdPath) ||
+    manifest.worktree_git_dir !== identity.worktreeGitDir ||
+    manifest.root_device !== rootStat.dev ||
+    manifest.root_inode !== rootStat.ino
+  ) {
+    throw new HarnessTrustError("local trust manifest does not match this repository worktree");
+  }
+
+  const tools = resolve(identity.root, HARNESS.toolsDir);
+  const candidate = resolve(identity.root, projectPath);
+  const withinTools = relative(tools, candidate);
+  if (withinTools === "" || withinTools.startsWith(`..${sep}`) || withinTools === ".." || isAbsolute(withinTools)) {
+    throw new HarnessTrustError("requested path is outside the trusted tools directory");
+  }
+
+  assertRegularUnsymlinkedPath(tools, candidate);
+  if (!isContained(realpathSync(identity.root), realpathSync(candidate))) {
+    throw new HarnessTrustError("requested path escapes the repository");
+  }
+
+  const relativePath = relative(identity.root, candidate).split(sep).join("/");
+  const entry = manifest.files.find((file) => file.path === relativePath);
+  if (!entry || !/^[a-f0-9]{64}$/.test(entry.sha256)) {
+    throw new HarnessTrustError("requested path is not in the local trust manifest");
+  }
+  if (sha256File(candidate) !== entry.sha256) {
+    throw new HarnessTrustError("trusted harness script has changed");
+  }
+  return candidate;
+}
+
+async function readGitIdentity(dir: string): Promise<{
+  root: string;
+  commonDir: string;
+  worktreeGitDir: string;
+}> {
+  try {
+    const rootResult = await execa("git", ["rev-parse", "--show-toplevel"], { cwd: dir });
+    const root = realpathSync(resolve(dir, rootResult.stdout.trim()));
+    if (realpathSync(resolve(dir)) !== root) {
+      throw new HarnessTrustError("script execution must use the repository root");
+    }
+    const [commonResult, gitDirResult] = await Promise.all([
+      execa("git", ["rev-parse", "--git-common-dir"], { cwd: root }),
+      execa("git", ["rev-parse", "--git-dir"], { cwd: root }),
+    ]);
+    const commonDir = realpathSync(resolve(root, commonResult.stdout.trim()));
+    const gitDir = realpathSync(resolve(root, gitDirResult.stdout.trim()));
+    const worktreeGitDir = relative(commonDir, gitDir) || ".";
+    if (worktreeGitDir === ".." || worktreeGitDir.startsWith(`..${sep}`) || isAbsolute(worktreeGitDir)) {
+      throw new HarnessTrustError("Git worktree metadata is outside the common directory");
+    }
+    return { root, commonDir, worktreeGitDir: worktreeGitDir.split(sep).join("/") };
+  } catch (err) {
+    if (err instanceof HarnessTrustError) throw err;
+    throw new HarnessTrustError("repository identity could not be verified");
+  }
+}
+
+function collectTrustedTools(root: string): Array<{ path: string; sha256: string }> {
+  const tools = resolve(root, HARNESS.toolsDir);
+  assertUnsymlinkedDirectoryPath(root, tools);
+  if (!isContained(realpathSync(root), realpathSync(tools))) {
+    throw new HarnessTrustError("harness tools directory escapes the repository");
+  }
+
+  const files: Array<{ path: string; sha256: string }> = [];
+  const visit = (directory: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const path = join(directory, entry.name);
+      const stat = lstatSync(path);
+      if (stat.isSymbolicLink()) throw new HarnessTrustError("harness tools cannot contain symlinks");
+      if (stat.isDirectory()) {
+        visit(path);
+      } else if (stat.isFile()) {
+        files.push({ path: relative(root, path).split(sep).join("/"), sha256: sha256File(path) });
+      } else {
+        throw new HarnessTrustError("harness tools cannot contain non-regular files");
+      }
+    }
+  };
+  visit(tools);
+  return files;
+}
+
+function assertRegularUnsymlinkedPath(tools: string, candidate: string): void {
+  const root = resolve(tools, "..", "..");
+  assertUnsymlinkedDirectoryPath(root, tools);
+  let current = tools;
+  for (const part of relative(tools, candidate).split(sep)) {
+    current = join(current, part);
+    const stat = lstatSync(current);
+    if (stat.isSymbolicLink()) throw new HarnessTrustError("harness script path contains a symlink");
+    if (current === candidate && !stat.isFile()) {
+      throw new HarnessTrustError("harness script is not a regular file");
+    }
+  }
+}
+
+function assertUnsymlinkedDirectoryPath(root: string, directory: string): void {
+  let current = root;
+  for (const part of relative(root, directory).split(sep)) {
+    current = join(current, part);
+    const stat = lstatSync(current);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      throw new HarnessTrustError("harness tools directory must be a real unsymlinked directory");
+    }
+  }
+}
+
+function manifestFile(trustDir: string, worktreeGitDir: string): string {
+  return join(trustDir, `${createHash("sha256").update(worktreeGitDir).digest("hex")}.json`);
+}
+
+function isHarnessTrustManifest(value: unknown): value is HarnessTrustManifest {
+  if (!value || typeof value !== "object") return false;
+  const manifest = value as Partial<HarnessTrustManifest>;
+  if (
+    manifest.schema_version !== HARNESS_TRUST.schemaVersion ||
+    typeof manifest.template_version !== "string" ||
+    manifest.template_version.length === 0 ||
+    typeof manifest.repository_id !== "string" ||
+    typeof manifest.worktree_git_dir !== "string" ||
+    typeof manifest.project_root !== "string" ||
+    !isAbsolute(manifest.project_root) ||
+    typeof manifest.root_device !== "number" ||
+    typeof manifest.root_inode !== "number" ||
+    !Array.isArray(manifest.files)
+  ) {
+    return false;
+  }
+  const paths = new Set<string>();
+  for (const file of manifest.files) {
+    if (
+      !file ||
+      typeof file.path !== "string" ||
+      !file.path.startsWith(`${HARNESS.toolsDir}/`) ||
+      paths.has(file.path) ||
+      typeof file.sha256 !== "string" ||
+      !/^[a-f0-9]{64}$/.test(file.sha256)
+    ) {
+      return false;
+    }
+    paths.add(file.path);
+  }
+  return true;
+}
+
+function readRepositoryId(path: string): string {
+  try {
+    const value = readFileSync(path, "utf8").trim();
+    if (!/^[0-9a-f-]{36}$/i.test(value)) throw new Error("invalid repository id");
+    return value;
+  } catch {
+    throw new HarnessTrustError("local repository identity is missing or invalid");
+  }
+}
+
+function sha256File(path: string): string {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+function isContained(root: string, path: string): boolean {
+  const rel = relative(root, path);
+  return rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+
+function trustMessage(err: unknown): string {
+  return err instanceof HarnessTrustError
+    ? err.message
+    : "Refusing to execute an untrusted harness script: trust verification failed";
+}
 
 async function ensurePython(): Promise<void> {
   if (pythonChecked) return;

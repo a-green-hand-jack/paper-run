@@ -10,6 +10,7 @@ import {
   sessionExists,
   sendPrompt,
   abortSession,
+  abortAndWaitForIdle,
   getSessionStatus,
   showToast,
 } from "../../src/opencode/session.js";
@@ -21,6 +22,7 @@ import {
   replyToPermission,
 } from "../../src/opencode/interaction.js";
 import { isProcessAlive, assertNoConcurrentRun } from "../../src/opencode/attach.js";
+import { buildTuiArgs } from "../../src/opencode/tui.js";
 import { writeSessionState } from "../../src/state/store.js";
 import { OpencodeError, ConcurrentRunError } from "../../src/utils/errors.js";
 
@@ -216,9 +218,49 @@ describe("sendPrompt", () => {
     );
   });
 
+  it("sends a fully-qualified model as an SDK model reference", async () => {
+    const client = mockClient();
+    await sendPrompt(client, {
+      sessionId: "ses_1",
+      text: "do the thing",
+      model: "openai/gpt-5.6-sol",
+    });
+    expect(client.session.promptAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        model: { providerID: "openai", modelID: "gpt-5.6-sol" },
+      }),
+    );
+  });
+
+  it("rejects a model without a provider", async () => {
+    const client = mockClient();
+    await expect(
+      sendPrompt(client, { sessionId: "ses_1", text: "x", model: "gpt-5.6-sol" }),
+    ).rejects.toThrow(/provider\/model/);
+  });
+
   it("throws on API error", async () => {
     const client = mockClient({ session: { promptAsync: vi.fn(() => fail({ m: 1 })) } });
     await expect(sendPrompt(client, { sessionId: "s", text: "t" })).rejects.toThrow(OpencodeError);
+  });
+});
+
+describe("buildTuiArgs", () => {
+  it("uses only options supported by opencode attach", () => {
+    expect(
+      buildTuiArgs({
+        serverUrl: "http://127.0.0.1:4096",
+        sessionId: "ses_1",
+        projectDir: "/paper",
+      }),
+    ).toEqual([
+      "attach",
+      "http://127.0.0.1:4096",
+      "--session",
+      "ses_1",
+      "--dir",
+      "/paper",
+    ]);
   });
 });
 
@@ -228,6 +270,23 @@ describe("abortSession", () => {
       session: { abort: vi.fn(() => Promise.reject(new Error("gone"))) },
     });
     await expect(abortSession(client, "ses_1")).resolves.toBeUndefined();
+  });
+});
+
+describe("abortAndWaitForIdle", () => {
+  it("aborts the exact session and waits until it settles", async () => {
+    let checks = 0;
+    const client = mockClient({
+      session: {
+        abort: vi.fn(() => ok({})),
+        status: vi.fn(() => ok(checks++ === 0 ? { ses_1: { type: "busy" } } : {})),
+      },
+    });
+
+    await abortAndWaitForIdle(client, "ses_1", "/paper", 500);
+
+    expect(client.session.abort).toHaveBeenCalledWith({ sessionID: "ses_1", directory: "/paper" });
+    expect(client.session.status).toHaveBeenCalledTimes(2);
   });
 });
 

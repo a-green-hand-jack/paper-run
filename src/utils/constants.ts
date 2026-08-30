@@ -36,6 +36,13 @@ export const HARNESS = {
   buildProfile: ".agents/paper-build.json",
 } as const;
 
+/** Local-only harness provenance stored below Git's common directory. */
+export const HARNESS_TRUST = {
+  schemaVersion: "paper-run-harness-trust-v1",
+  directory: "paper-run-trust",
+  repositoryIdFile: "paper-run-repository-id",
+} as const;
+
 /** Harness paper contracts, by logical name. */
 export const CONTRACTS = {
   PAPER: "PAPER.md",
@@ -69,6 +76,7 @@ export const TRAILER_KEYS = [
   "Paper-Run-Session",
   "Paper-Run-Template",
   "Paper-Run-Material-Hash",
+  "Paper-Run-Kind",
   "Paper-Run-Timestamp",
 ] as const;
 

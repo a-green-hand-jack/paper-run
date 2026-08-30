@@ -59,7 +59,9 @@ export type Validator =
       message: string;
     }
   /** A JSON state file paper-run itself owns must be present and parseable. */
-  | { type: "state_file"; file: string; required: boolean; message: string };
+  | { type: "state_file"; file: string; required: boolean; message: string }
+  /** Validate fresh artifacts declared by .agents/paper-build.json or the safe fallback. */
+  | { type: "publication_build"; required: boolean; message: string };
 
 export interface Stage {
   id: StageId;
@@ -350,6 +352,13 @@ export const STAGES: Record<StageId, Stage> = {
         required: true,
         message: "Paper interface macros are missing or inconsistent",
       },
+      {
+        type: "check_script",
+        script: "check-reference-integrity.py",
+        args: ["--profile", "draft"],
+        required: true,
+        message: "Draft reference and claim-evidence integrity check failed",
+      },
     ],
     timeoutMs: 20 * MINUTES,
     retries: 1,
@@ -366,11 +375,25 @@ export const STAGES: Record<StageId, Stage> = {
       ".agents/skills/ccf-integrity-auditor/SKILL.md",
     ],
     expectedOutputs: [
-      "A findings report classified by severity: blocker, major, minor",
+      ".paper-run/review-findings.md with blocker, major, and minor findings sections",
       "Unsupported claims and fabrication risks called out explicitly",
       "Findings only — this stage reports, it does not fix",
     ],
     validators: [
+      {
+        type: "file_exists",
+        path: ".paper-run/review-findings.md",
+        minBytes: 200,
+        required: true,
+        message: "Independent review did not produce .paper-run/review-findings.md",
+      },
+      ...["Blocker", "Major", "Minor"].map((severity) => ({
+        type: "contract_section" as const,
+        contract: ".paper-run/review-findings.md",
+        heading: `## ${severity} findings`,
+        required: true,
+        message: `Independent review report has no substantive ## ${severity} findings section (write \"None.\" when there are no findings)`,
+      })),
       {
         type: "check_script",
         script: "check-paper-contracts.py",
@@ -432,6 +455,11 @@ export const STAGES: Record<StageId, Stage> = {
         script: "check-paper-profile.py",
         required: true,
         message: "Build profile (.agents/paper-build.json) is invalid",
+      },
+      {
+        type: "publication_build",
+        required: true,
+        message: "Publication build command failed or did not produce its configured output",
       },
     ],
     timeoutMs: 20 * MINUTES,

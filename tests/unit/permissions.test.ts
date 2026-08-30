@@ -18,16 +18,8 @@ import {
 import type { PermissionAskedPayload } from "../../src/controller/permissions.js";
 
 describe("isAutoApproved", () => {
-  it("approves harness validators and read-only inspection", () => {
+  it("does not auto-approve even read-only-looking inspection", () => {
     for (const cmd of [
-      "python3 .agents/tools/check-structure.py",
-      "python3 .agents/tools/check-paper-contracts.py --strict",
-      "python3 .agents/tools/paper-init.py status",
-      "bash .agents/tools/verify.sh",
-      "./.agents/tools/verify.sh",
-      "make pdf VARIANT=draft",
-      "make clean",
-      "make check",
       "git status",
       "git status --porcelain",
       "git diff --cached",
@@ -36,7 +28,7 @@ describe("isAutoApproved", () => {
       "git ls-files",
       "  git status  ",
     ]) {
-      expect(isAutoApproved(cmd), `should approve: ${cmd}`).toBe(true);
+      expect(isAutoApproved(cmd), `should not approve: ${cmd}`).toBe(false);
     }
   });
 
@@ -54,14 +46,22 @@ describe("isAutoApproved", () => {
       "npm install",
       "python3 evil.py",
       "python3 .agents/tools/../../evil.py",
+      "python3 .agents/tools/check-structure.py",
+      "python3 .agents/tools/check-paper-contracts.py --strict",
+      "bash .agents/tools/verify.sh",
+      "./.agents/tools/verify.sh",
       "bash something-else.sh",
+      "make pdf VARIANT=draft",
+      "make clean",
+      "make check",
+      "git add paper/main.tex",
     ]) {
       expect(isAutoApproved(cmd), `should not approve: ${cmd}`).toBe(false);
     }
   });
 
   it("does not approve near-misses of allowed prefixes", () => {
-    for (const cmd of ["git statusfoo", "make pdfevil", "makepdf", "gitstatus"]) {
+    for (const cmd of ["git statusfoo", "gitstatus"]) {
       expect(isAutoApproved(cmd), `should not approve: ${cmd}`).toBe(false);
     }
   });
@@ -143,19 +143,35 @@ describe("handlePermissionRequest", () => {
     };
   }
 
-  it("approves an allowed bash command once", async () => {
+  it("leaves every bash command for the human", async () => {
     const client = mockClient();
     const approved = await handlePermissionRequest(client, {
       id: "per_1",
       sessionID: "ses_1",
       permission: "bash",
-      metadata: { command: "make pdf VARIANT=draft" },
+      metadata: { command: "git status --porcelain" },
     });
 
-    expect(approved).toBe(true);
-    expect(client.permission.reply).toHaveBeenCalledWith(
-      expect.objectContaining({ requestID: "per_1", reply: "once" }),
-    );
+    expect(approved).toBe(false);
+    expect(client.permission.reply).not.toHaveBeenCalled();
+  });
+
+  it("leaves builds and repository validators for explicit human approval", async () => {
+    for (const command of [
+      "make pdf",
+      "python3 .agents/tools/check-publication.py",
+      "bash .agents/tools/verify.sh",
+    ]) {
+      const client = mockClient();
+      const approved = await handlePermissionRequest(client, {
+        id: "per_1",
+        sessionID: "ses_1",
+        permission: "bash",
+        metadata: { command },
+      });
+      expect(approved, command).toBe(false);
+      expect(client.permission.reply).not.toHaveBeenCalled();
+    }
   });
 
   it("leaves a disallowed command for the human", async () => {
@@ -184,7 +200,7 @@ describe("handlePermissionRequest", () => {
     expect(client.permission.reply).not.toHaveBeenCalled();
   });
 
-  it("treats a lost race with the human as not-approved rather than an error", async () => {
+  it("does not contact the server when no command is auto-approved", async () => {
     const client = mockClient(() => Promise.reject(new Error("already answered")));
     await expect(
       handlePermissionRequest(client, {
@@ -194,5 +210,6 @@ describe("handlePermissionRequest", () => {
         metadata: { command: "git status" },
       }),
     ).resolves.toBe(false);
+    expect(client.permission.reply).not.toHaveBeenCalled();
   });
 });

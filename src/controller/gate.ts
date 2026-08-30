@@ -5,7 +5,7 @@
  * paths; they are presets over a per-stage policy table, read here at the
  * boundary between stages:
  *
- *     run stage -> validate -> checkpoint -> GATE -> proceed | await human
+ *     run stage -> validate -> checkpoint waiting output -> GATE -> proceed
  *
  * That is what makes switching modes mid-run cheap: the mode is a value, not
  * control flow, so a change takes effect at the next gate without disturbing
@@ -34,12 +34,10 @@
 import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 
 import { readRunState, updateRunState } from "../state/store.js";
-import { switchGatePreset } from "../state/gate-presets.js";
-import { writeGatePolicy } from "../state/store.js";
 import type { GatePolicy } from "../state/schema.js";
-import type { Mode } from "../utils/constants.js";
 import { log } from "../utils/logger.js";
 import {
+  abortAndWaitForIdle,
   sendPrompt,
   showToast,
 } from "../opencode/session.js";
@@ -97,6 +95,12 @@ export function decisionFromLabel(label: string): GateDecision {
 
 export type GateAction = "auto" | "await_human" | "skip";
 
+/** Immutable policy result captured once at the controller's gate boundary. */
+export interface ResolvedGate {
+  policy: GatePolicy;
+  action: GateAction;
+}
+
 /**
  * The configured action for a stage.
  *
@@ -150,6 +154,8 @@ export interface GateContext {
   pollIntervalMs?: number;
   /** Give up waiting after this long. Defaults to no limit. */
   timeoutMs?: number;
+  /** Maximum wait for the gate prompt to go idle after its question resolves. */
+  settleTimeoutMs?: number;
   signal?: AbortSignal;
 }
 
@@ -159,10 +165,10 @@ export interface GateContext {
  * Returns as soon as the gate resolves by either route.
  */
 export async function evaluateGate(
-  policy: GatePolicy,
+  resolved: ResolvedGate,
   ctx: GateContext,
 ): Promise<GateDecision> {
-  const action = gateActionFor(policy, ctx.stageId);
+  const { action } = resolved;
 
   if (action === "auto" || action === "skip") {
     log.debug(`gate ${ctx.stageId}: ${action} -> proceed`);
@@ -170,7 +176,6 @@ export async function evaluateGate(
   }
 
   log.step(`Gate reached at "${ctx.stageId}" — waiting for approval`);
-  updateRunState(ctx.projectDir, { stage_status: "gate_waiting" });
 
   await showToast(ctx.client, {
     message: `paper-run: waiting for approval at "${ctx.stageId}"`,
@@ -186,7 +191,8 @@ export async function evaluateGate(
 
   const decision = await waitForGateRelease(ctx);
 
-  // Record the outcome so a resumed run does not re-ask a gate already answered.
+  // Record the live outcome. Until the completed checkpoint is committed, a
+  // crash resumes from the gate_waiting checkpoint at HEAD and asks again.
   updateRunState(ctx.projectDir, {
     stage_status: decision.outcome === "proceed" ? "approved" : "gate_waiting",
   });
@@ -213,21 +219,24 @@ async function waitForGateRelease(ctx: GateContext): Promise<GateDecision> {
       : undefined;
 
   try {
-    const decision = await Promise.race([
-      watchForQuestionReply(ctx, controller.signal),
-      pollForApproval(ctx, pollInterval, controller.signal),
+    const released = await Promise.race([
+      watchForQuestionReply(ctx, controller.signal).then((decision) => ({ source: "question" as const, decision })),
+      pollForApproval(ctx, pollInterval, controller.signal).then((decision) => ({ source: "state" as const, decision })),
     ]);
 
-    // Stop the losing watcher.
-    controller.abort();
-
     // An `/approve` leaves the agent's question unanswered, which would keep
-    // the session blocked. Answer it on the human's behalf.
-    if (decision.outcome === "proceed") {
-      await settlePendingQuestions(ctx, GATE_CHOICES.approve);
+    // the session blocked. Answer it, then abort that exact prompt turn so it
+    // cannot continue doing work after the externally resolved gate.
+    if (released.source === "state") {
+      if (released.decision.outcome === "proceed") {
+        await settlePendingQuestions(ctx, GATE_CHOICES.approve);
+      }
+      await abortAndWaitForIdle(ctx.client, ctx.sessionId, ctx.projectDir, ctx.settleTimeoutMs);
     }
 
-    return decision;
+    // Stop the losing watcher only after the gate prompt is idle or aborted.
+    controller.abort();
+    return released.decision;
   } finally {
     if (timer) clearTimeout(timer);
     ctx.signal?.removeEventListener("abort", onAbort);
@@ -243,6 +252,7 @@ async function watchForQuestionReply(
   // Track questions raised during this gate so a stale one from an earlier
   // turn cannot be mistaken for this gate's answer.
   const ours = new Set<string>();
+  let decision: GateDecision | undefined;
 
   const events = subscribeEvents(ctx.client, {
     sessionId: ctx.sessionId,
@@ -250,8 +260,22 @@ async function watchForQuestionReply(
     signal,
   });
 
-  for await (const event of events) {
+  const iterator = events[Symbol.asyncIterator]();
+  for (;;) {
+    const next = decision
+      ? await nextWithTimeout(iterator, ctx.settleTimeoutMs ?? 5_000)
+      : await iterator.next();
+    if (next === "timeout") {
+      await abortAndWaitForIdle(ctx.client, ctx.sessionId, ctx.projectDir, ctx.settleTimeoutMs);
+      return decision!;
+    }
+    if (next.done) break;
+    const event = next.value;
     if (signal.aborted) break;
+
+    if (decision && (event.kind === "idle" || (event.kind === "status" && event.status === "idle"))) {
+      return decision;
+    }
 
     if (event.kind === "question") {
       ours.add(event.requestID);
@@ -259,7 +283,8 @@ async function watchForQuestionReply(
     }
 
     if (event.kind === "question-rejected" && ours.has(event.requestID)) {
-      return { outcome: "stop", reason: "question was rejected" };
+      decision = { outcome: "stop", reason: "question was rejected" };
+      continue;
     }
 
     if (event.kind === "question-replied" && ours.has(event.requestID)) {
@@ -268,13 +293,24 @@ async function watchForQuestionReply(
       if (label === undefined) {
         // Answered with nothing selected. Treat an empty answer as needing
         // another look rather than as approval.
-        return { outcome: "revise", reason: "gate answered with no selection" };
+        decision = { outcome: "revise", reason: "gate answered with no selection" };
+        continue;
       }
-      return decisionFromLabel(label);
+      decision = decisionFromLabel(label);
     }
   }
 
   return { outcome: "stop", reason: "aborted while waiting at gate" };
+}
+
+async function nextWithTimeout<T>(
+  iterator: AsyncIterator<T>,
+  timeoutMs: number,
+): Promise<IteratorResult<T> | "timeout"> {
+  return Promise.race([
+    iterator.next(),
+    new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), timeoutMs)),
+  ]);
 }
 
 /** Resolve when `/approve` (or a reject) lands in run.json. */
@@ -338,31 +374,4 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
       { once: true },
     );
   });
-}
-
-// ---------------------------------------------------------------------------
-// Mode switching
-// ---------------------------------------------------------------------------
-
-/**
- * Switch operating mode.
- *
- * Rewrites the gate policy from the new mode's preset while preserving any
- * per-gate override the user set, and mirrors the mode into `run.json`. Takes
- * effect at the next gate; a stage already running is left alone.
- *
- * `PAPER.md ## Operating mode` is the harness's own record of this and is
- * updated by the `/mode` command in the TUI, where the agent owns contract
- * edits. We deliberately do not write contracts from the controller.
- */
-export function switchMode(
-  projectDir: string,
-  current: GatePolicy,
-  newMode: Mode,
-): GatePolicy {
-  const next = switchGatePreset(current, newMode);
-  writeGatePolicy(projectDir, next);
-  updateRunState(projectDir, { mode: newMode });
-  log.debug(`mode switched to ${newMode}; effective at the next gate`);
-  return next;
 }

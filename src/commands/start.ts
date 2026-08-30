@@ -22,14 +22,15 @@ import { readRunState, readGatePolicy, updateRunState } from "../state/store.js"
 import type { RunState } from "../state/schema.js";
 import { generateGatePreset } from "../state/gate-presets.js";
 import { writeGatePolicy } from "../state/store.js";
+import { switchOperatingMode } from "../state/mode.js";
+import { prepareRunResume } from "./checkpoint.js";
 
-import { attachRun, detachRun } from "../opencode/attach.js";
+import { assertNoConcurrentRun, attachRun, detachRun } from "../opencode/attach.js";
 import { launchTui, hasOpencodeCli } from "../opencode/tui.js";
 import { showToast } from "../opencode/session.js";
 
 import { PipelineController } from "../controller/controller.js";
 import type { PipelineResult } from "../controller/controller.js";
-import { switchMode } from "../controller/gate.js";
 
 import { detectHarness } from "../harness/harness.js";
 import { isAdapterInstalled, installAdapter } from "../adapter/install.js";
@@ -62,17 +63,19 @@ export async function startCommand(opts: StartOptions): Promise<void> {
   // left overnight still leaves a readable trace of where it got to.
   setLogFile(join(projectDir, PAPER_RUN_DIR, "run.log"));
 
+  assertNoConcurrentRun(projectDir);
+  let state = await prepareRunResume(projectDir);
   await assertRunnable(projectDir);
 
   // --- state ---
-  let state = readRunState(projectDir);
   let policy = readGatePolicy(projectDir);
 
   if (opts.mode) {
     const mode = parseMode(opts.mode);
-    if (mode !== state.mode) {
-      policy = switchMode(projectDir, policy, mode);
-      state = readRunState(projectDir);
+    const result = switchOperatingMode(projectDir, mode);
+    policy = result.policy;
+    state = readRunState(projectDir);
+    if (result.previousMode !== mode) {
       log.info(`Mode set to ${mode} for this run.`);
     }
   }
@@ -89,7 +92,7 @@ export async function startCommand(opts: StartOptions): Promise<void> {
     runId: state.run_id,
     mode: state.mode,
     port: opts.port,
-    sessionIdOverride: opts.session,
+    sessionIdOverride: resolveResumeSession(opts.session, state.session_id),
   });
 
   // Record the session on the run so checkpoints can carry it.
@@ -104,6 +107,7 @@ export async function startCommand(opts: StartOptions): Promise<void> {
     sessionId: run.sessionId,
     projectDir,
     policy,
+    ...(opts.model !== undefined ? { model: opts.model } : {}),
     signal: abort.signal,
   });
 
@@ -128,7 +132,6 @@ export async function startCommand(opts: StartOptions): Promise<void> {
         serverUrl: run.server.url,
         sessionId: run.sessionId,
         projectDir,
-        ...(opts.model !== undefined ? { model: opts.model } : {}),
       });
     }
   } finally {
@@ -138,6 +141,10 @@ export async function startCommand(opts: StartOptions): Promise<void> {
   }
 
   applyExitCode(result);
+}
+
+export function resolveResumeSession(explicit: string | undefined, reconciled: string | undefined): string | undefined {
+  return explicit ?? reconciled;
 }
 
 // ---------------------------------------------------------------------------
@@ -150,13 +157,11 @@ async function runWithTui(args: {
   serverUrl: string;
   sessionId: string;
   projectDir: string;
-  model?: string;
 }): Promise<PipelineResult> {
   const tui = launchTui({
     serverUrl: args.serverUrl,
     sessionId: args.sessionId,
     projectDir: args.projectDir,
-    ...(args.model !== undefined ? { model: args.model } : {}),
   });
 
   // The controller runs behind the TUI. Its rejection is captured rather than
@@ -418,15 +423,12 @@ export async function modeCommand(target?: string): Promise<void> {
   }
 
   const mode = parseMode(target);
-  const policy = readGatePolicy(projectDir);
-
-  if (policy.mode === mode) {
-    log.info(`Already in ${mode} mode.`);
-    return;
+  const result = switchOperatingMode(projectDir, mode);
+  if (result.previousMode === mode) {
+    log.info(`Mode is ${mode}; state files are aligned.`);
+  } else {
+    log.success(`Mode switched to ${mode}.`);
   }
-
-  switchMode(projectDir, policy, mode);
-  log.success(`Mode switched to ${mode}.`);
   log.hint("Takes effect at the next gate; a stage already running is unaffected.");
 }
 

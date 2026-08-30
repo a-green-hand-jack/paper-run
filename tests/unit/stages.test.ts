@@ -8,9 +8,18 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+} from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { execaSync } from "execa";
 
 import {
   STAGES,
@@ -25,9 +34,14 @@ import {
   renderRemediationPrompt,
   renderSummaryRequest,
 } from "../../src/pipeline/prompts.js";
-import { validateStage, hasNonEmptySection } from "../../src/pipeline/validators.js";
+import {
+  capturePublicationBaseline,
+  validateStage,
+  hasNonEmptySection,
+} from "../../src/pipeline/validators.js";
 import { PIPELINE_STAGES } from "../../src/state/gate-presets.js";
 import type { StageRecord } from "../../src/state/schema.js";
+import { initializeHarnessTrust } from "../../src/harness/harness.js";
 
 /**
  * A harness checkout, for cross-checking that every path we send the agent to
@@ -38,6 +52,43 @@ import type { StageRecord } from "../../src/state/schema.js";
  */
 const HARNESS_CHECKOUT = process.env.PAPER_RUN_HARNESS ?? "/tmp/awh";
 const hasHarness = existsSync(join(HARNESS_CHECKOUT, "AGENTS.md"));
+
+function writeBuildProfile(
+  root: string,
+  build: { name: string; command: string[]; output?: string },
+): void {
+  mkdirSync(join(root, ".agents"), { recursive: true });
+  writeFileSync(
+    join(root, ".agents", "paper-build.json"),
+    JSON.stringify({
+      schema_version: "paper-build-profile-v1",
+      layout: "external-latex",
+      source_root: "paper",
+      entrypoint: "paper/main.tex",
+      bibliography: "paper/refs.bib",
+      builds: [build],
+    }),
+  );
+}
+
+function publicationOnlyStage() {
+  return {
+    ...STAGES.publication_build,
+    validators: [
+      { type: "publication_build" as const, required: true, message: "build failed" },
+    ],
+  };
+}
+
+function writeDefaultPublicationSources(root: string): void {
+  mkdirSync(join(root, "paper"), { recursive: true });
+  writeFileSync(join(root, "paper", "main.tex"), "source");
+  writeFileSync(join(root, "paper", "refs.bib"), "bibliography");
+}
+
+function pdf(body = "artifact"): string {
+  return `%PDF-1.7\n${body}\n%%EOF\n`;
+}
 
 describe("harness checkout presence", () => {
   it("is available when running in CI", () => {
@@ -95,6 +146,30 @@ describe("stage definitions", () => {
     // The harness has no sufficiency-assessment skill; this stage is ours.
     expect(STAGES.material_assessment.harnessSkill).toBeNull();
   });
+
+  it("requires a structured independent review artifact", () => {
+    expect(STAGES.independent_review.validators).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "file_exists", path: ".paper-run/review-findings.md" }),
+        expect.objectContaining({ type: "contract_section", heading: "## Blocker findings" }),
+        expect.objectContaining({ type: "contract_section", heading: "## Major findings" }),
+        expect.objectContaining({ type: "contract_section", heading: "## Minor findings" }),
+      ]),
+    );
+  });
+
+  it("validates publication artifacts and checks references during self-review", () => {
+    expect(STAGES.publication_build.validators).toContainEqual(
+      expect.objectContaining({ type: "publication_build", required: true }),
+    );
+    expect(STAGES.self_review.validators).toContainEqual(
+      expect.objectContaining({
+        type: "check_script",
+        script: "check-reference-integrity.py",
+        args: ["--profile", "draft"],
+      }),
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -133,6 +208,8 @@ describe.skipIf(!hasHarness)("harness references (checked against a real checkou
     for (const stage of Object.values(STAGES)) {
       for (const validator of stage.validators) {
         if (validator.type !== "contract_section") continue;
+        // paper-run stage artifacts are created at runtime, not shipped by the harness.
+        if (validator.contract.startsWith(".paper-run/")) continue;
         const path = join(HARNESS_CHECKOUT, validator.contract);
         expect(existsSync(path), `${stage.id} -> ${validator.contract}`).toBe(true);
       }
@@ -520,5 +597,237 @@ describe("validateStage", () => {
     expect(result.passed).toBe(true);
     expect(result.failures).toHaveLength(0);
     expect(result.checks[0]?.passed).toBe(false);
+  });
+
+  it("requires every severity section in the independent review artifact", async () => {
+    writeFileSync(
+      join(tmpDir, ".paper-run", "review-findings.md"),
+      "## Review summary\n\nReviewed.\n\n## Blocker findings\n\nNone.\n\n## Major findings\n\nA major issue.\n",
+    );
+    const stage = {
+      ...STAGES.independent_review,
+      validators: STAGES.independent_review.validators.filter(
+        (validator) => validator.type !== "check_script",
+      ),
+    };
+
+    const result = await validateStage(stage, tmpDir);
+    expect(result.passed).toBe(false);
+    expect(result.failures.join(" ")).toContain("Minor findings");
+  });
+
+  it("does not execute a malicious Makefile while validating publication artifacts", async () => {
+    writeDefaultPublicationSources(tmpDir);
+    writeFileSync(join(tmpDir, "paper.pdf"), pdf());
+    writeFileSync(join(tmpDir, "Makefile"), "pdf:\n\t@printf compromised > make-ran\n");
+    writeBuildProfile(tmpDir, {
+      name: "test-pdf",
+      command: ["make", "pdf", "VARIANT=draft"],
+      output: "paper.pdf",
+    });
+
+    expect((await validateStage(publicationOnlyStage(), tmpDir)).passed).toBe(true);
+    expect(existsSync(join(tmpDir, "make-ran"))).toBe(false);
+  });
+
+  it("uses paper/main.pdf as the fallback output without executing make", async () => {
+    writeDefaultPublicationSources(tmpDir);
+    writeFileSync(join(tmpDir, "paper", "main.pdf"), pdf());
+    writeFileSync(join(tmpDir, "Makefile"), "pdf:\n\t@printf built > make-pdf-ran\n");
+
+    expect((await validateStage(publicationOnlyStage(), tmpDir)).passed).toBe(true);
+    expect(existsSync(join(tmpDir, "make-pdf-ran"))).toBe(false);
+  });
+
+  it("requires every configured build to declare an output", async () => {
+    writeDefaultPublicationSources(tmpDir);
+    writeBuildProfile(tmpDir, {
+      name: "missing-output",
+      command: ["make", "pdf"],
+    });
+
+    const result = await validateStage(publicationOnlyStage(), tmpDir);
+    expect(result.passed).toBe(false);
+    expect(result.failures.join(" ")).toContain("missing output");
+  });
+
+  it("fails when the default output is missing", async () => {
+    writeDefaultPublicationSources(tmpDir);
+
+    const result = await validateStage(publicationOnlyStage(), tmpDir);
+    expect(result.passed).toBe(false);
+    expect(result.failures.join(" ")).toContain("output is missing or empty");
+  });
+
+  it("rejects arbitrary executables without running them or exposing argv", async () => {
+    writeDefaultPublicationSources(tmpDir);
+    writeBuildProfile(tmpDir, {
+      name: "unsafe",
+      command: ["sh", "-c", "printf super-secret > build-ran"],
+      output: "paper.pdf",
+    });
+    const result = await validateStage(publicationOnlyStage(), tmpDir);
+    expect(result.passed).toBe(false);
+    expect(existsSync(join(tmpDir, "build-ran"))).toBe(false);
+    expect(result.failures.join(" ")).not.toContain("super-secret");
+  });
+
+  it.each(["/tmp/paper.pdf", "../paper.pdf", ""])(
+    "rejects unsafe configured output %j",
+    async (output) => {
+      writeDefaultPublicationSources(tmpDir);
+      writeBuildProfile(tmpDir, {
+        name: "unsafe-output",
+        command: ["make", "pdf"],
+        output,
+      });
+      expect((await validateStage(publicationOnlyStage(), tmpDir)).passed).toBe(false);
+      expect(existsSync(join(tmpDir, "build-ran"))).toBe(false);
+    },
+  );
+
+  it("rejects an output path that escapes through a symlink", async () => {
+    const outside = mkdtempSync(join(tmpdir(), "paper-run-output-"));
+    try {
+      writeDefaultPublicationSources(tmpDir);
+      symlinkSync(outside, join(tmpDir, "linked-output"));
+      writeFileSync(join(outside, "paper.pdf"), pdf());
+      writeBuildProfile(tmpDir, {
+        name: "symlink-output",
+        command: ["make", "pdf"],
+        output: "linked-output/paper.pdf",
+      });
+      expect((await validateStage(publicationOnlyStage(), tmpDir)).passed).toBe(false);
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects an output older than source_root contents", async () => {
+    writeDefaultPublicationSources(tmpDir);
+    writeFileSync(join(tmpDir, "paper.pdf"), pdf());
+    writeBuildProfile(tmpDir, {
+      name: "stale-output",
+      command: ["make", "pdf"],
+      output: "paper.pdf",
+    });
+    const old = new Date("2020-01-01T00:00:00Z");
+    const current = new Date("2021-01-01T00:00:00Z");
+    utimesSync(join(tmpDir, "paper.pdf"), old, old);
+    utimesSync(join(tmpDir, "paper", "main.tex"), current, current);
+
+    const result = await validateStage(publicationOnlyStage(), tmpDir);
+    expect(result.passed).toBe(false);
+    expect(result.failures.join(" ")).toContain("output is stale");
+  });
+
+  it("accepts a nonempty regular output current with all declared sources", async () => {
+    writeDefaultPublicationSources(tmpDir);
+    writeFileSync(join(tmpDir, "paper.pdf"), pdf());
+    writeBuildProfile(tmpDir, {
+      name: "changed-output",
+      command: ["make", "pdf"],
+      output: "paper.pdf",
+    });
+    expect((await validateStage(publicationOnlyStage(), tmpDir)).passed).toBe(true);
+  });
+
+  it("rejects a non-PDF output declaration", async () => {
+    writeDefaultPublicationSources(tmpDir);
+    writeFileSync(join(tmpDir, "paper.bin"), pdf());
+    writeBuildProfile(tmpDir, {
+      name: "wrong-extension",
+      command: ["make", "pdf"],
+      output: "paper.bin",
+    });
+
+    const result = await validateStage(publicationOnlyStage(), tmpDir);
+    expect(result.failures.join(" ")).toContain("must be a .pdf file");
+  });
+
+  it.each(["not a pdf", "%PDF-1.7\nmissing eof"])(
+    "rejects invalid PDF structure",
+    async (content) => {
+      writeDefaultPublicationSources(tmpDir);
+      writeFileSync(join(tmpDir, "paper.pdf"), content);
+      writeBuildProfile(tmpDir, {
+        name: "invalid-pdf",
+        command: ["make", "pdf"],
+        output: "paper.pdf",
+      });
+
+      const result = await validateStage(publicationOnlyStage(), tmpDir);
+      expect(result.failures.join(" ")).toContain("structurally valid PDF");
+    },
+  );
+
+  it("requires an artifact digest to change from the stage-turn baseline", async () => {
+    writeDefaultPublicationSources(tmpDir);
+    writeFileSync(join(tmpDir, "paper.pdf"), pdf("before"));
+    writeBuildProfile(tmpDir, {
+      name: "stage-output",
+      command: ["make", "pdf"],
+      output: "paper.pdf",
+    });
+    const baseline = capturePublicationBaseline(tmpDir);
+
+    const unchanged = await validateStage(publicationOnlyStage(), tmpDir, {
+      publicationBaseline: baseline,
+    });
+    expect(unchanged.failures.join(" ")).toContain("was not rebuilt during this stage");
+
+    writeFileSync(join(tmpDir, "paper.pdf"), pdf("after"));
+    expect(
+      (await validateStage(publicationOnlyStage(), tmpDir, { publicationBaseline: baseline })).passed,
+    ).toBe(true);
+  });
+
+  it("rejects an output declaration changed after baseline capture", async () => {
+    writeDefaultPublicationSources(tmpDir);
+    writeFileSync(join(tmpDir, "first.pdf"), pdf("first"));
+    writeBuildProfile(tmpDir, {
+      name: "stage-output",
+      command: ["make", "pdf"],
+      output: "first.pdf",
+    });
+    const baseline = capturePublicationBaseline(tmpDir);
+    writeFileSync(join(tmpDir, "second.pdf"), pdf("second"));
+    writeBuildProfile(tmpDir, {
+      name: "stage-output",
+      command: ["make", "pdf"],
+      output: "second.pdf",
+    });
+
+    const result = await validateStage(publicationOnlyStage(), tmpDir, {
+      publicationBaseline: baseline,
+    });
+    expect(result.failures.join(" ")).toContain("output declaration changed during this stage");
+  });
+
+  it("does not include validator stdout or stderr in failure diagnostics", async () => {
+    mkdirSync(join(tmpDir, ".agents", "tools"), { recursive: true });
+    writeFileSync(
+      join(tmpDir, ".agents", "tools", "check-secret.py"),
+      "import sys\nprint('stdout-secret')\nprint('stderr-secret', file=sys.stderr)\nraise SystemExit(3)\n",
+    );
+    execaSync("git", ["init"], { cwd: tmpDir });
+    await initializeHarnessTrust(tmpDir, "test");
+    const stage = {
+      ...STAGES.bootstrap,
+      validators: [
+        {
+          type: "check_script" as const,
+          script: "check-secret.py",
+          required: true,
+          message: "check failed",
+        },
+      ],
+    };
+
+    const result = await validateStage(stage, tmpDir);
+    expect(result.passed).toBe(false);
+    expect(result.failures.join(" ")).toContain("exited with code 3");
+    expect(result.failures.join(" ")).not.toContain("stdout-secret");
+    expect(result.failures.join(" ")).not.toContain("stderr-secret");
   });
 });

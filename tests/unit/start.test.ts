@@ -9,12 +9,13 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execaSync } from "execa";
 
 import { statusCommand, modeCommand } from "../../src/commands/start.js";
+import { resolveResumeSession } from "../../src/commands/start.js";
 import {
   writeRunState,
   readRunState,
@@ -54,6 +55,10 @@ beforeEach(() => {
 
   writeRunState(tmpDir, makeRunState());
   writeGatePolicy(tmpDir, generateGatePreset("collaborative"));
+  writeFileSync(
+    join(tmpDir, "PAPER.md"),
+    "# Paper\n\n## Operating mode\n\n- Mode: collaborative\n- Collaboration: bounded\n\n## Claims\n\nKeep me.\n",
+  );
   writeStageHistory(tmpDir, {
     schema_version: "paper-run-stage-history-v1",
     stages: [
@@ -161,6 +166,8 @@ describe("modeCommand", () => {
     expect(policy.mode).toBe("autonomous");
     // Previously await_human under the collaborative preset.
     expect(policy.gates["paper_positioning"]?.policy).toBe("auto");
+    expect(readFileSync(join(tmpDir, "PAPER.md"), "utf-8")).toContain("- Mode: autonomous");
+    expect(readFileSync(join(tmpDir, "PAPER.md"), "utf-8")).toContain("- Collaboration: bounded");
   });
 
   it("preserves a per-gate override across the switch", async () => {
@@ -174,10 +181,24 @@ describe("modeCommand", () => {
     expect(readGatePolicy(tmpDir).gates["evidence_inventory"]?.policy).toBe("await_human");
   });
 
-  it("is a no-op when already in the requested mode", async () => {
+  it("keeps gate policy unchanged when already in the requested mode", async () => {
     const before = readGatePolicy(tmpDir);
     await modeCommand("collaborative");
     expect(readGatePolicy(tmpDir)).toEqual(before);
+  });
+
+  it("repairs drift when the gate policy already has the target mode", async () => {
+    writeRunState(tmpDir, makeRunState({ mode: "autonomous" }));
+    writeFileSync(
+      join(tmpDir, "PAPER.md"),
+      "# Paper\n\n## Operating mode\n\n- Mode: autonomous\n- Collaboration: bounded\n",
+    );
+
+    await modeCommand("collaborative");
+
+    expect(readRunState(tmpDir).mode).toBe("collaborative");
+    expect(readGatePolicy(tmpDir).mode).toBe("collaborative");
+    expect(readFileSync(join(tmpDir, "PAPER.md"), "utf-8")).toContain("- Mode: collaborative");
   });
 
   it("rejects an unknown mode without touching state", async () => {
@@ -200,6 +221,11 @@ describe("modeCommand", () => {
 // ---------------------------------------------------------------------------
 
 describe("configured model check", () => {
+  it("prefers an explicit session and otherwise reuses checkpoint state", () => {
+    expect(resolveResumeSession("explicit", "checkpoint")).toBe("explicit");
+    expect(resolveResumeSession(undefined, "checkpoint")).toBe("checkpoint");
+  });
+
   it("reads the model from the project config", async () => {
     const { readConfiguredModel } = await import("../../src/commands/start.js");
     writeFileSync(

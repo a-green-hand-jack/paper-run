@@ -28,6 +28,7 @@ import {
   runBriefValidate,
   runBriefIngest,
   getTemplateVersion,
+  initializeHarnessTrust,
 } from "../harness/harness.js";
 import { generateGatePreset } from "../state/gate-presets.js";
 import {
@@ -63,6 +64,8 @@ export interface InitOptions {
   /** Model for the OpenCode adapter. */
   model?: string;
 }
+
+export const INITIAL_STAGE_STATUS: RunState["stage_status"] = "pending";
 
 export async function initCommand(directory: string, opts: InitOptions): Promise<void> {
   const target = resolve(directory);
@@ -113,6 +116,9 @@ export async function initCommand(directory: string, opts: InitOptions): Promise
         cwd: target,
       });
     }
+
+    // Trust is local Git metadata and must exist before any fetched code runs.
+    await initializeHarnessTrust(target, version);
 
     // --- brief: validate before committing to anything ---
     log.step("Validating the brief");
@@ -174,7 +180,7 @@ export async function initCommand(directory: string, opts: InitOptions): Promise
       run_branch: branch,
       mode,
       current_stage: "bootstrap",
-      stage_status: "pending",
+      stage_status: INITIAL_STAGE_STATUS,
       started_at: now,
       updated_at: now,
       template_version: getTemplateVersion(target) ?? version,
@@ -193,7 +199,7 @@ export async function initCommand(directory: string, opts: InitOptions): Promise
     const sha = await commitCheckpoint(
       {
         stageId: "bootstrap",
-        status: "completed",
+        status: INITIAL_STAGE_STATUS,
         runId,
         mode,
         templateVersion: state.template_version,

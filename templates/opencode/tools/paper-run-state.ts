@@ -9,18 +9,12 @@
  * a gate is waiting) already computed, so the agent does not recompute them —
  * and does not get them wrong.
  *
- * Writing: `run.json` is the controller's file. The one write an agent is ever
- * allowed to make is releasing a gate, and expressing that as a narrow tool
- * rather than a free-form file edit means a malformed or over-broad write is
- * refused instead of silently corrupting the run. Every other field is preserved
- * byte-for-byte.
- *
  * Installed by paper-run. Kept dependency-free (node:fs only) so it works in any
  * writing repo without an install step.
  */
 
 import { tool } from "@opencode-ai/plugin"
-import { existsSync, readFileSync, writeFileSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 
 const PAPER_RUN_DIR = ".paper-run"
@@ -71,36 +65,15 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 export default tool({
   description:
     "Read paper-run pipeline state (current stage, status, mode, gate policy, progress, " +
-    "last checkpoint) as one consistent snapshot, or release a gate that is waiting for " +
-    "human approval. Use action 'read' to orient before starting work; use 'gate-response' " +
-    "only when the user has explicitly approved the current gate.",
+    "last checkpoint) as one consistent snapshot. This tool never mutates state.",
   args: {
     action: tool.schema
-      .enum(["read", "gate-response"])
-      .describe(
-        "'read' returns a snapshot of all paper-run state. 'gate-response' approves or " +
-          "rejects a gate, and only works when stage_status is 'gate_waiting'.",
-      ),
-    response: tool.schema
-      .enum(["approve", "reject"])
-      .optional()
-      .describe(
-        "Required for 'gate-response'. 'approve' sets stage_status to 'approved' so the " +
-          "controller continues; 'reject' sets it to 'blocked' so the run halts for repair.",
-      ),
-    note: tool.schema
-      .string()
-      .optional()
-      .describe("Optional reason, recorded on the run when rejecting a gate."),
+      .enum(["read"])
+      .describe("'read' returns a snapshot without changing any state."),
   },
-  async execute(args, context) {
+  async execute(_args, context) {
     const directory = context.directory ?? process.cwd()
-
-    if (args.action === "read") {
-      return readState(directory)
-    }
-
-    return gateResponse(directory, args.response, args.note)
+    return readState(directory)
   },
 })
 
@@ -178,70 +151,6 @@ function readState(directory: string): string {
       material_assessment: assessment
         ? { verdict: assessment["verdict"] ?? null, summary: assessment["summary"] ?? null }
         : null,
-    },
-    null,
-    2,
-  )
-}
-
-// ---------------------------------------------------------------------------
-// gate-response
-// ---------------------------------------------------------------------------
-
-function gateResponse(directory: string, response: string | undefined, note: string | undefined): string {
-  if (response !== "approve" && response !== "reject") {
-    return JSON.stringify({
-      error: "missing_response",
-      message: "action 'gate-response' requires response to be 'approve' or 'reject'.",
-    })
-  }
-
-  const path = statePath(directory, FILES.run)
-  const run = asRecord(readJson(path))
-  if (!run) {
-    return JSON.stringify({
-      error: "no_run_state",
-      message: "No readable .paper-run/run.json — nothing to approve.",
-    })
-  }
-
-  if (run["stage_status"] !== "gate_waiting") {
-    return JSON.stringify({
-      error: "not_at_gate",
-      message:
-        `The pipeline is not waiting for approval (stage_status is ` +
-        `"${String(run["stage_status"])}"). No state was changed.`,
-      current_stage: run["current_stage"] ?? null,
-      stage_status: run["stage_status"] ?? null,
-    })
-  }
-
-  const now = new Date().toISOString()
-  // Preserve every other field exactly as the controller wrote it.
-  const updated: Record<string, unknown> = { ...run }
-  updated["stage_status"] = response === "approve" ? "approved" : "blocked"
-  updated["updated_at"] = now
-
-  if (response === "reject") {
-    updated["error"] = {
-      stage: run["current_stage"] ?? "unknown",
-      message: note ?? "Gate rejected by the user.",
-      at: now,
-    }
-  }
-
-  writeFileSync(path, `${JSON.stringify(updated, null, 2)}\n`)
-
-  return JSON.stringify(
-    {
-      ok: true,
-      stage: run["current_stage"] ?? null,
-      stage_status: updated["stage_status"],
-      updated_at: now,
-      message:
-        response === "approve"
-          ? "Gate approved. The paper-run controller will advance at its next poll."
-          : "Gate rejected. The run is now blocked and needs the underlying problem fixed.",
     },
     null,
     2,

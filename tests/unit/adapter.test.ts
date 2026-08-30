@@ -306,6 +306,75 @@ describe("isAdapterInstalled", () => {
     expect(singular).toContain("test/model");
   });
 
+  it("allows the reviewer to edit only its exact findings artifact", async () => {
+    await installAdapter(tmpDir);
+    const reviewer = readFileSync(
+      join(tmpDir, OPENCODE_DIR, "agent", "paper-reviewer.md"),
+      "utf-8",
+    );
+
+    expect(reviewer).toContain('edit:\n    "*": deny\n    ".paper-run/review-findings.md": allow');
+    expect(reviewer).toContain("Write the report to `.paper-run/review-findings.md`");
+    expect(reviewer).not.toMatch(/edit:\s+allow/);
+    expect(reviewer).toContain("bash: deny");
+    expect(reviewer).not.toContain("python3 .agents/tools");
+    expect(reviewer).not.toContain("make pdf");
+  });
+
+  it("protects controller and harness files while allowing the assessment artifact", async () => {
+    await installAdapter(tmpDir);
+    const writer = readFileSync(join(tmpDir, OPENCODE_DIR, "agent", "paper-writer.md"), "utf-8");
+    const config = readFileSync(join(tmpDir, "opencode.json"), "utf-8");
+    const writerFrontmatter = writer.split("---")[1] ?? "";
+
+    expect(writer).toContain(
+      'edit:\n    "*": allow\n    ".agents/**": deny\n    ".paper-run/**": deny\n    ".paper-run/assessment.json": allow',
+    );
+    for (const text of [writerFrontmatter, config]) {
+      expect(text).not.toContain("python3 .agents/");
+      expect(text).not.toContain("bash .agents/tools/");
+      expect(text).not.toContain("make *");
+      expect(text).not.toContain("git add*");
+    }
+  });
+
+  it("requires explicit bash approval for /mode without a tool bypass", async () => {
+    await installAdapter(tmpDir);
+    const command = readFileSync(join(tmpDir, OPENCODE_DIR, "command", "mode.md"), "utf-8");
+    const stateTool = readFileSync(
+      join(tmpDir, OPENCODE_DIR, "tools", "paper-run-state.ts"),
+      "utf-8",
+    );
+    const config = readFileSync(join(tmpDir, "opencode.json"), "utf-8");
+    const writer = readFileSync(join(tmpDir, OPENCODE_DIR, "agent", "paper-writer.md"), "utf-8");
+
+    expect(command).toContain("exact bash command `paper-run mode $ARGUMENTS`");
+    expect(command).toContain("must be shown for explicit human approval");
+    expect(command).toContain("Do not edit `run.json`, `gate-policy.json`, or `PAPER.md` yourself");
+    expect(stateTool).not.toContain("switch-mode");
+    expect(stateTool).not.toContain("paper-run mode");
+    expect(config).not.toContain('"paper-run mode');
+    expect(writer).not.toContain('"paper-run mode');
+  });
+
+  it("routes /approve through the native CLI while the state tool stays read-only", async () => {
+    await installAdapter(tmpDir);
+    const command = readFileSync(join(tmpDir, OPENCODE_DIR, "command", "approve.md"), "utf-8");
+    const stateTool = readFileSync(
+      join(tmpDir, OPENCODE_DIR, "tools", "paper-run-state.ts"),
+      "utf-8",
+    );
+    const config = JSON.parse(readFileSync(join(tmpDir, "opencode.json"), "utf-8"));
+
+    expect(command).toContain("exact bash command `paper-run approve`");
+    expect(command).toContain("must be shown for explicit human approval");
+    expect(command).toContain("do not edit `.paper-run/run.json`");
+    expect(stateTool).toContain("This tool never mutates state");
+    expect(stateTool).not.toContain("gate-response");
+    expect(stateTool).not.toContain("writeFileSync");
+    expect(config.permission.bash).toBe("ask");
+  });
+
   it("ignores the run log as well as the session file", async () => {
     // A long headless run mirrors its output to .paper-run/run.log so a run
     // that dies overnight still leaves a trace. That file is runtime state

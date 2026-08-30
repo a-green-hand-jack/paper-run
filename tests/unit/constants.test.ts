@@ -36,7 +36,8 @@ describe("constants", () => {
 
   it("TRAILER_KEYS starts with Paper-Run-Stage", () => {
     expect(TRAILER_KEYS[0]).toBe("Paper-Run-Stage");
-    expect(TRAILER_KEYS.length).toBe(8);
+    expect(TRAILER_KEYS).toContain("Paper-Run-Kind");
+    expect(TRAILER_KEYS.length).toBe(9);
     for (const key of TRAILER_KEYS) {
       expect(key.startsWith("Paper-Run-")).toBe(true);
     }

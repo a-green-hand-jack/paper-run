@@ -4,11 +4,10 @@
  * Two routes, because "create a paper repo" means different things to
  * different users:
  *
- *  - **GitHub** (`gh repo create --template`) — the documented happy path.
- *    Creates a repo under the user's account with the template's structure and
- *    clones it. Requires `gh`, authentication, and network.
- *  - **Local** (tarball) — no GitHub account, no remote. Downloads the pinned
- *    tag and unpacks it. Still needs network, but nothing else.
+ *  - **GitHub** — fetches the requested tag first, starts fresh history from
+ *    that exact tree, then publishes it with `gh repo create --source`.
+ *  - **Local** — no GitHub account and no remote. Fetches the pinned tag's
+ *    tree with Git. Still needs network, but nothing else.
  *
  * The template is always pinned to a tag. It ships 5 releases in 52 days and
  * renamed itself at v0.3.0, so tracking a moving target would break writing
@@ -87,11 +86,7 @@ export async function fetchTemplate(
 }
 
 /**
- * Create a GitHub repo from the template and clone it.
- *
- * `gh repo create --template` copies the template's *current default branch*
- * rather than a tag, so the clone is checked against the requested version
- * afterwards and the caller is warned if they differ.
+ * Fetch an immutable template tag, start fresh history, and publish that tree.
  */
 async function fetchViaGh(
   target: string,
@@ -120,21 +115,18 @@ async function fetchViaGh(
     });
   }
 
-  log.step(`Creating ${repoName} from ${TEMPLATE_REPO}`);
+  log.step(`Fetching ${TEMPLATE_REPO}@${version}`);
 
   const visibility = opts.private === false ? "--public" : "--private";
 
   try {
-    await execa("gh", [
-      "repo",
-      "create",
-      repoName,
-      "--template",
-      TEMPLATE_REPO,
-      visibility,
-      "--clone",
-      target,
-    ]);
+    await fetchTagTree(target, version);
+    await execa("git", ["init"], { cwd: target });
+    await execa("git", ["add", "-A"], { cwd: target });
+    await execa("git", ["commit", "-m", `Initialize writing repository from ${TEMPLATE_REPO}@${version}`], {
+      cwd: target,
+    });
+    await execa("gh", ["repo", "create", repoName, visibility, "--source", target, "--remote", "origin", "--push"]);
   } catch (err) {
     throw new PaperRunError(`Could not create the repository: ${describeExecError(err)}`, {
       hint: "Check the name is available and you have permission to create repositories there.",
@@ -154,14 +146,28 @@ async function fetchViaGh(
 }
 
 /**
- * Download and unpack the template tarball for a pinned tag.
+ * Download and unpack the template tree for a pinned tag.
  *
  * Uses git rather than curl+tar so there is one fewer dependency to check, and
  * so a partial download fails loudly instead of unpacking half a template.
  */
 async function fetchViaTarball(target: string, version: string): Promise<FetchTemplateResult> {
-  log.step(`Fetching ${TEMPLATE_REPO}@${version}`);
+  try {
+    await fetchTagTree(target, version);
+  } catch (err) {
+    throw new PaperRunError(
+      `Could not fetch the template at ${version}: ${describeExecError(err)}`,
+      {
+        hint: `Check the tag exists and you have network access: https://github.com/${TEMPLATE_REPO}/releases`,
+        cause: err,
+      },
+    );
+  }
 
+  return { source: "local", version };
+}
+
+async function fetchTagTree(target: string, version: string): Promise<void> {
   const staging = `${target}.paper-run-staging`;
   rmSync(staging, { recursive: true, force: true });
 
@@ -175,27 +181,25 @@ async function fetchViaTarball(target: string, version: string): Promise<FetchTe
       `https://github.com/${TEMPLATE_REPO}.git`,
       staging,
     ]);
-  } catch (err) {
+
+    const tagRef = `refs/tags/${version}^{commit}`;
+    const [tagCommit, headCommit] = await Promise.all([
+      execa("git", ["rev-parse", "--verify", tagRef], { cwd: staging }),
+      execa("git", ["rev-parse", "--verify", "HEAD"], { cwd: staging }),
+    ]);
+    if (!tagCommit.stdout.trim() || tagCommit.stdout.trim() !== headCommit.stdout.trim()) {
+      throw new PaperRunError(`Fetched tree is not the requested immutable tag ${version}.`);
+    }
+
+    // A writing repository starts history from the fetched tag's exact tree.
+    rmSync(join(staging, ".git"), { recursive: true, force: true });
+    mkdirSync(target, { recursive: true });
+    for (const entry of readdirSync(staging)) {
+      renameSync(join(staging, entry), join(target, entry));
+    }
+  } finally {
     rmSync(staging, { recursive: true, force: true });
-    throw new PaperRunError(
-      `Could not fetch the template at ${version}: ${describeExecError(err)}`,
-      {
-        hint: `Check the tag exists and you have network access: https://github.com/${TEMPLATE_REPO}/releases`,
-        cause: err,
-      },
-    );
   }
-
-  // Drop the template's own history: a writing repo starts its own.
-  rmSync(join(staging, ".git"), { recursive: true, force: true });
-
-  mkdirSync(target, { recursive: true });
-  for (const entry of readdirSync(staging)) {
-    renameSync(join(staging, entry), join(target, entry));
-  }
-  rmSync(staging, { recursive: true, force: true });
-
-  return { source: "local", version };
 }
 
 // ---------------------------------------------------------------------------
@@ -205,9 +209,7 @@ async function fetchViaTarball(target: string, version: string): Promise<FetchTe
 /**
  * Confirm the fetched tree actually looks like the harness.
  *
- * Guards against a template that moved on: if `gh` copied a default branch
- * that no longer ships these paths, failing here is far better than failing
- * later inside a stage.
+ * Guards against an incomplete or incompatible tagged template before init.
  */
 export function verifyTemplateTree(dir: string): string[] {
   const required = [

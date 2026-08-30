@@ -57,6 +57,15 @@ export class MissingDependencyError extends PaperRunError {
   }
 }
 
+/** A repository-provided harness script is not covered by local provenance. */
+export class HarnessTrustError extends PaperRunError {
+  constructor(detail: string) {
+    super(`Refusing to execute an untrusted harness script: ${detail}`, {
+      hint: "Only `paper-run init` can establish harness trust for a newly fetched template.",
+    });
+  }
+}
+
 /** State file failed schema validation. */
 export class StateSchemaError extends PaperRunError {
   constructor(file: string, detail: string) {

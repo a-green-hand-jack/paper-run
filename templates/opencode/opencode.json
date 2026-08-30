@@ -10,20 +10,6 @@
     "list": "allow",
     "edit": "allow",
     "webfetch": "allow",
-    "bash": {
-      "python3 .agents/*": "allow",
-      "bash .agents/tools/*": "allow",
-      "./.agents/tools/*": "allow",
-      "make *": "allow",
-      "git status*": "allow",
-      "git diff*": "allow",
-      "git log*": "allow",
-      "git add*": "allow",
-      "git show*": "allow",
-      "ls *": "allow",
-      "cat *": "allow",
-      "rg *": "allow",
-      "*": "ask"
-    }
+    "bash": "ask"
   }
 }

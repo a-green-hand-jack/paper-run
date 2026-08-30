@@ -16,6 +16,7 @@ import {
   findLastCheckpoint,
   checkDirtyState,
   isGitRepo,
+  verifyHeadConsistency,
 } from "../../src/utils/git.js";
 
 function initGitRepo(dir: string): void {
@@ -119,6 +120,24 @@ describe("commitCheckpoint", () => {
     );
     expect(sha).toHaveLength(40);
   });
+
+  it("stages only explicit checkpoint paths and rejects every other project change", async () => {
+    writeFileSync(join(tmpDir, "owned.txt"), "owned");
+    writeFileSync(join(tmpDir, "unexpected.txt"), "unexpected");
+
+    await expect(commitCheckpoint({
+      stageId: "bootstrap",
+      status: "completed",
+      runId: "abcd1234",
+      mode: "autonomous",
+      templateVersion: "v0.3.0",
+      stageAll: false,
+      stagePaths: ["owned.txt"],
+    }, tmpDir)).rejects.toThrow(/unexpected project changes/);
+
+    expect(execaSync("git", ["diff", "--cached", "--name-only"], { cwd: tmpDir }).stdout.trim()).toBe("owned.txt");
+    expect(execaSync("git", ["status", "--porcelain", "unexpected.txt"], { cwd: tmpDir }).stdout).toContain("??");
+  });
 });
 
 describe("tagCandidate", () => {
@@ -152,6 +171,7 @@ Paper-Run-Status: completed
 Paper-Run-Run: abcd1234
 Paper-Run-Mode: autonomous
 Paper-Run-Template: v0.3.0
+Paper-Run-Kind: automatic
 Paper-Run-Timestamp: 2026-08-28T10:00:00.000Z`;
 
     const trailers = parseTrailers(message);
@@ -165,6 +185,28 @@ Paper-Run-Timestamp: 2026-08-28T10:00:00.000Z`;
   it("returns empty object for messages without trailers", () => {
     const trailers = parseTrailers("Just a normal commit message\n\nWith a body");
     expect(Object.keys(trailers)).toHaveLength(0);
+  });
+
+  it.each([
+    ["missing mandatory key", `Subject\n\nPaper-Run-Stage: bootstrap\nPaper-Run-Status: completed`],
+    ["duplicate key", `Subject\n\nPaper-Run-Stage: bootstrap\nPaper-Run-Stage: bootstrap\nPaper-Run-Status: completed\nPaper-Run-Run: abcd1234\nPaper-Run-Mode: autonomous\nPaper-Run-Template: v0.3.0\nPaper-Run-Kind: automatic\nPaper-Run-Timestamp: 2026-08-28T10:00:00.000Z`],
+    ["body impersonation", `Ordinary commit\n\nPaper-Run-Stage: bootstrap\nPaper-Run-Status: completed\nPaper-Run-Run: abcd1234\nPaper-Run-Mode: autonomous\nPaper-Run-Template: v0.3.0\nPaper-Run-Kind: automatic\nPaper-Run-Timestamp: 2026-08-28T10:00:00.000Z`],
+    ["control injection", `Subject\n\nPaper-Run-Stage: bootstrap\rmalicious\nPaper-Run-Status: completed\nPaper-Run-Run: abcd1234\nPaper-Run-Mode: autonomous\nPaper-Run-Template: v0.3.0\nPaper-Run-Kind: automatic\nPaper-Run-Timestamp: 2026-08-28T10:00:00.000Z`],
+  ])("rejects %s trailers", (_name, message) => {
+    expect(() => parseTrailers(message)).toThrow(/Invalid Paper-Run checkpoint trailers/);
+  });
+
+  it("prevents newline injection while constructing trailers", async () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "paper-run-git-injection-"));
+    initGitRepo(tmpDir);
+    await expect(commitCheckpoint({
+      stageId: "bootstrap\nPaper-Run-Run: attacker",
+      status: "completed",
+      runId: "abcd1234",
+      mode: "autonomous",
+      templateVersion: "v0.3.0",
+    }, tmpDir)).rejects.toThrow(/Invalid Paper-Run-Stage/);
+    rmSync(tmpDir, { recursive: true, force: true });
   });
 });
 
@@ -239,6 +281,44 @@ describe("checkDirtyState", () => {
     const state = await checkDirtyState(tmpDir);
     expect(state.clean).toBe(false);
     expect(state.files.length).toBeGreaterThan(0);
+    expect(state.untrackedFiles).toEqual(["new.txt"]);
+  });
+});
+
+describe("verifyHeadConsistency", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "paper-run-git-"));
+    initGitRepo(tmpDir);
+    execaSync("git", ["checkout", "-b", "paper-run/abcd1234"], { cwd: tmpDir });
+  });
+
+  afterEach(() => rmSync(tmpDir, { recursive: true, force: true }));
+
+  it("requires the run checkpoint itself to be HEAD", async () => {
+    const state = {
+      schema_version: "paper-run-v1" as const,
+      run_id: "abcd1234",
+      run_branch: "paper-run/abcd1234",
+      mode: "autonomous" as const,
+      current_stage: "bootstrap",
+      stage_status: "completed" as const,
+      started_at: "2026-08-30T10:00:00.000Z",
+      updated_at: "2026-08-30T10:00:00.000Z",
+      template_version: "v0.3.0",
+    };
+    await commitCheckpoint({
+      stageId: "bootstrap",
+      status: "completed",
+      runId: state.run_id,
+      mode: state.mode,
+      templateVersion: state.template_version,
+    }, tmpDir);
+    expect((await verifyHeadConsistency(state, tmpDir)).consistent).toBe(true);
+
+    execaSync("git", ["commit", "--allow-empty", "-m", "not a checkpoint"], { cwd: tmpDir });
+    expect((await verifyHeadConsistency(state, tmpDir)).consistent).toBe(false);
   });
 });
 

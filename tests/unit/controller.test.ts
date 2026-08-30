@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execaSync } from "execa";
@@ -22,11 +22,14 @@ import {
   writeRunState,
   readRunState,
   readStageHistory,
+  writeGatePolicy,
   writeStageHistory,
 } from "../../src/state/store.js";
 import type { RunState } from "../../src/state/schema.js";
 import { STAGES } from "../../src/pipeline/stages.js";
 import { GATE_CHOICES } from "../../src/controller/gate.js";
+import { commitCheckpoint } from "../../src/utils/git.js";
+import { initializeHarnessTrust } from "../../src/harness/harness.js";
 
 // ---------------------------------------------------------------------------
 // Repo fixture
@@ -38,7 +41,15 @@ function initRepo(dir: string): void {
   execaSync("git", ["init"], { cwd: dir });
   execaSync("git", ["config", "user.email", "t@t.com"], { cwd: dir });
   execaSync("git", ["config", "user.name", "T"], { cwd: dir });
-  execaSync("git", ["commit", "--allow-empty", "-m", "init"], { cwd: dir });
+  writeFileSync(join(dir, "BRIEF.md"), "x".repeat(200));
+  writeFileSync(
+    join(dir, "PAPER.md"),
+    "# Paper\n\n## Paper identity\n\n- Working title: Baseline\n\n## What readers should believe\n\n### Central thesis \u2014 locked\n\nKeep this thesis.\n\n### Contributions\n\n- A contribution.\n\n## What must not change silently\n\nCurrent locked items:\n\n- The central thesis.\n",
+  );
+  mkdirSync(join(dir, ".agents", "tools"), { recursive: true });
+  writeFileSync(join(dir, ".agents", "tools", "check-structure.py"), "import sys; sys.exit(0)\n");
+  execaSync("git", ["add", "BRIEF.md", "PAPER.md", ".agents/tools/check-structure.py"], { cwd: dir });
+  execaSync("git", ["commit", "-m", "init"], { cwd: dir });
 }
 
 function makeRunState(overrides: Partial<RunState> = {}): RunState {
@@ -59,9 +70,6 @@ function makeRunState(overrides: Partial<RunState> = {}): RunState {
 /** Satisfy the bootstrap stage's validators. */
 function satisfyBootstrap(dir: string): void {
   writeFileSync(join(dir, "BRIEF.md"), "x".repeat(200));
-  // check-structure.py is absent, so runCheck reports "script not found",
-  // which fails. Provide a stub that exits 0.
-  mkdirSync(join(dir, ".agents", "tools"), { recursive: true });
   writeFileSync(join(dir, ".agents", "tools", "check-structure.py"), "import sys; sys.exit(0)\n");
 }
 
@@ -101,25 +109,32 @@ interface MockOpts {
   /** Runs when a prompt arrives — the simulated agent's side effects. */
   onPrompt?: (text: string, turn: number) => void;
   /** Events to emit while waiting, per turn. */
-  eventsForTurn?: (turn: number) => unknown[];
+  eventsForTurn?: (turn: number) => Array<unknown | (() => void)>;
 }
 
 function mockClient(opts: MockOpts = {}): any {
   let turn = 0;
   const prompts: string[] = [];
+  const promptArgs: any[] = [];
+  let promptedSessionId = "ses_1";
+  let reviewSession = 0;
 
   const client: any = {
     _prompts: prompts,
+    _promptArgs: promptArgs,
     session: {
+      create: vi.fn(() => ok({ id: `ses_review_${++reviewSession}` })),
       promptAsync: vi.fn((args: any) => {
         const text = args.parts[0].text;
         prompts.push(text);
+        promptArgs.push(args);
+        promptedSessionId = args.sessionID;
         turn += 1;
         opts.onPrompt?.(text, turn);
         return ok({});
       }),
       // Always busy on first ask so waitForIdle listens to the stream.
-      status: vi.fn(() => ok({ ses_1: { type: "busy" } })),
+      status: vi.fn(() => ok({ [promptedSessionId]: { type: "busy" } })),
       abort: vi.fn(() => ok({})),
     },
     event: {
@@ -129,10 +144,14 @@ function mockClient(opts: MockOpts = {}): any {
             const extra = opts.eventsForTurn?.(turn) ?? [];
             for (const e of extra) {
               await new Promise((r) => setTimeout(r, 2));
+              if (typeof e === "function") {
+                e();
+                continue;
+              }
               yield e;
             }
             await new Promise((r) => setTimeout(r, 2));
-            yield { type: "session.idle", properties: { sessionID: "ses_1" } };
+            yield { type: "session.idle", properties: { sessionID: promptedSessionId } };
             // Then hold open.
             await new Promise(() => {});
           })(),
@@ -151,13 +170,17 @@ function makeController(
   client: any,
   mode: "autonomous" | "collaborative" = "autonomous",
   signal?: AbortSignal,
+  agent?: string,
 ) {
+  const policy = generateGatePreset(mode);
+  writeGatePolicy(tmpDir, policy);
   return new PipelineController({
     client,
     sessionId: "ses_1",
     projectDir: tmpDir,
-    policy: generateGatePreset(mode),
+    policy,
     ...(signal ? { signal } : {}),
+    ...(agent ? { agent } : {}),
   });
 }
 
@@ -181,12 +204,14 @@ function abortAfterStage(stageId: string, ac: AbortController, timeoutMs = 3000)
   }, 10);
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   tmpDir = mkdtempSync(join(tmpdir(), "paper-run-ctrl-"));
   mkdirSync(join(tmpDir, ".paper-run"), { recursive: true });
   initRepo(tmpDir);
   writeRunState(tmpDir, makeRunState());
+  writeGatePolicy(tmpDir, generateGatePreset("autonomous"));
   writeStageHistory(tmpDir, { schema_version: "paper-run-stage-history-v1", stages: [] });
+  await initializeHarnessTrust(tmpDir, "v0.3.0");
 });
 
 afterEach(() => {
@@ -230,6 +255,23 @@ describe("running a stage", () => {
     expect(stdout).toContain("Paper-Run-Stage: bootstrap");
     expect(stdout).toContain("Paper-Run-Run: abcd1234");
     expect(stdout).toContain("Paper-Run-Mode: autonomous");
+    const { stdout: logBody } = execaSync("git", ["log", "--format=%B"], { cwd: tmpDir });
+    expect(logBody).not.toContain("Paper-Run-Status: gate_waiting");
+    const { stdout: files } = execaSync("git", ["show", "--format=", "--name-only", "HEAD"], { cwd: tmpDir });
+    expect(files).toContain(".paper-run/run.json");
+  });
+
+  it("runs each independent review attempt in a fresh paper-reviewer session", async () => {
+    const client = mockClient();
+    const controller = makeController(client, "autonomous", undefined, "paper-writer");
+    await (controller as any).takeTurn(STAGES.independent_review, "review cold");
+    await (controller as any).takeTurn(STAGES.independent_review, "review cold again");
+
+    expect(client.session.create).toHaveBeenCalledTimes(2);
+    expect(client._promptArgs).toEqual([
+      expect.objectContaining({ sessionID: "ses_review_1", agent: "paper-reviewer" }),
+      expect.objectContaining({ sessionID: "ses_review_2", agent: "paper-reviewer" }),
+    ]);
   });
 });
 
@@ -238,7 +280,37 @@ describe("running a stage", () => {
 // ---------------------------------------------------------------------------
 
 describe("validation", () => {
+  it("hard-stops a contract violation before validation or remediation", async () => {
+    const client = mockClient({
+      onPrompt: () => writeFileSync(join(tmpDir, "BRIEF.md"), "changed by the agent\n"),
+    });
+
+    const result = await makeController(client).run();
+
+    expect(result.status).toBe("stopped");
+    if (result.status === "stopped") {
+      expect(result.reason).toContain("locked-contract violation");
+      expect(result.reason).toContain("ordinary stage approval cannot authorize");
+    }
+    expect(client._prompts).toHaveLength(1);
+  });
+
+  it("does not route a collaborative locked violation through the ordinary gate", async () => {
+    const client = mockClient({
+      onPrompt: () => {
+        const path = join(tmpDir, "PAPER.md");
+        writeFileSync(path, readFileSync(path, "utf-8").replace("Keep this thesis.", "Change it."));
+      },
+    });
+
+    const result = await makeController(client, "collaborative").run();
+
+    expect(result.status).toBe("stopped");
+    expect(client._prompts.some((prompt: string) => prompt.includes("Use the `question` tool"))).toBe(false);
+  });
+
   it("retries with a remediation prompt naming the failures", async () => {
+    rmSync(join(tmpDir, ".agents", "tools", "check-structure.py"));
     let fixed = false;
     const client = mockClient({
       onPrompt: (_text, turn) => {
@@ -259,11 +331,12 @@ describe("validation", () => {
     const prompts: string[] = client._prompts;
     expect(prompts.length).toBeGreaterThanOrEqual(2);
     expect(prompts[1]).toContain("validation failed");
-    expect(prompts[1]).toContain("BRIEF.md");
+    expect(prompts[1]).toContain("check-structure.py");
   });
 
   it("blocks the run when remediation is exhausted", async () => {
     // Never satisfies the validators.
+    rmSync(join(tmpDir, ".agents", "tools", "check-structure.py"));
     const client = mockClient();
     const controller = makeController(client);
 
@@ -279,6 +352,7 @@ describe("validation", () => {
   });
 
   it("does not exceed the stage's retry budget", async () => {
+    rmSync(join(tmpDir, ".agents", "tools", "check-structure.py"));
     const client = mockClient();
     const controller = makeController(client);
     await controller.run();
@@ -470,6 +544,60 @@ describe("resume", () => {
     }
     expect(client._prompts).toHaveLength(0);
   });
+
+  it("keeps a gate_waiting checkpoint human-gated after policy switches to auto", async () => {
+    satisfyBootstrap(tmpDir);
+    const policy = generateGatePreset("collaborative");
+    policy.gates.bootstrap = { policy: "await_human" };
+    writeGatePolicy(tmpDir, policy);
+    writeRunState(tmpDir, makeRunState({ stage_status: "gate_waiting", mode: "collaborative" }));
+    await commitCheckpoint(
+      {
+        stageId: "bootstrap",
+        status: "gate_waiting",
+        runId: "abcd1234",
+        mode: "collaborative",
+        templateVersion: "v0.3.0",
+      },
+      tmpDir,
+    );
+    const switchedPolicy = generateGatePreset("autonomous");
+    writeGatePolicy(tmpDir, switchedPolicy);
+
+    const client = mockClient({
+      eventsForTurn: () => [
+        { type: "question.asked", properties: { id: "que_resume", sessionID: "ses_1" } },
+        {
+          type: "question.replied",
+          properties: {
+            requestID: "que_resume",
+            sessionID: "ses_1",
+            answers: [[GATE_CHOICES.approve]],
+          },
+        },
+      ],
+    });
+    const ac = new AbortController();
+    const controller = new PipelineController({
+      client,
+      sessionId: "ses_1",
+      projectDir: tmpDir,
+      policy: switchedPolicy,
+      agent: "paper-writer",
+      signal: ac.signal,
+    });
+    abortAfterStage("bootstrap", ac);
+
+    const result = await controller.run();
+
+    expect(result.status).toBe("stopped");
+    expect(client._prompts).toHaveLength(1);
+    expect(client._prompts[0]).toContain('gate after stage "bootstrap"');
+    expect(client._promptArgs[0]).not.toHaveProperty("agent", "paper-writer");
+    expect(readStageHistory(tmpDir).stages).toEqual([]);
+    const { stdout } = execaSync("git", ["log", "-1", "--format=%B"], { cwd: tmpDir });
+    expect(stdout).toContain("Paper-Run-Status: gate_waiting");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -512,9 +640,16 @@ describe("interruption", () => {
 
 describe("gates in collaborative mode", () => {
   it("waits at a gated stage and proceeds when approved", async () => {
+    let waitingCheckpointSeen = false;
     const client = mockClient({
-      onPrompt: (text) => {
+      onPrompt: (text, turn) => {
         if (text.includes("Bootstrap")) satisfyBootstrap(tmpDir);
+        if (turn === 2) {
+          const message = execaSync("git", ["log", "-1", "--format=%B"], {
+            cwd: tmpDir,
+          }).stdout;
+          waitingCheckpointSeen = message.includes("Paper-Run-Status: gate_waiting");
+        }
       },
       eventsForTurn: (turn) =>
         // The gate prompt is the second turn; answer its question.
@@ -536,6 +671,7 @@ describe("gates in collaborative mode", () => {
     // Gate bootstrap so the very first stage exercises the path.
     const policy = generateGatePreset("collaborative");
     policy.gates["bootstrap"] = { policy: "await_human" };
+    writeGatePolicy(tmpDir, policy);
 
     const ac = new AbortController();
     const controller = new PipelineController({
@@ -550,6 +686,111 @@ describe("gates in collaborative mode", () => {
 
     const record = readStageHistory(tmpDir).stages.find((s) => s.stage_id === "bootstrap");
     expect(record?.status).toBe("completed");
+    expect(waitingCheckpointSeen).toBe(true);
+    const { stdout: completedFiles } = execaSync("git", ["show", "--format=", "--name-only", "HEAD"], { cwd: tmpDir });
+    expect(completedFiles.trim().split("\n")).toEqual([".paper-run/run.json"]);
+  });
+
+  it("waits for the gate prompt turn to become idle before checking mutations", async () => {
+    const client = mockClient({
+      onPrompt: (text) => {
+        if (text.includes("Bootstrap")) satisfyBootstrap(tmpDir);
+      },
+      eventsForTurn: (turn) => turn >= 2 ? [
+        { type: "question.asked", properties: { id: "que_late", sessionID: "ses_1" } },
+        {
+          type: "question.replied",
+          properties: { requestID: "que_late", sessionID: "ses_1", answers: [[GATE_CHOICES.approve]] },
+        },
+        () => writeFileSync(join(tmpDir, "LATE.md"), "mutation after question reply\n"),
+      ] : [],
+    });
+    const policy = generateGatePreset("collaborative");
+    policy.gates.bootstrap = { policy: "await_human" };
+    writeGatePolicy(tmpDir, policy);
+
+    const result = await new PipelineController({
+      client,
+      sessionId: "ses_1",
+      projectDir: tmpDir,
+      policy,
+    }).run();
+
+    expect(result.status).toBe("stopped");
+    if (result.status === "stopped") expect(result.reason).toContain("LATE.md");
+  });
+
+  it("does not treat a gate-policy edit as controller-owned post-gate state", async () => {
+    const client = mockClient({
+      onPrompt: (text) => {
+        if (text.includes("Bootstrap")) satisfyBootstrap(tmpDir);
+      },
+      eventsForTurn: (turn) => turn >= 2 ? [
+        { type: "question.asked", properties: { id: "que_policy", sessionID: "ses_1" } },
+        {
+          type: "question.replied",
+          properties: { requestID: "que_policy", sessionID: "ses_1", answers: [[GATE_CHOICES.approve]] },
+        },
+        () => {
+          const changed = generateGatePreset("autonomous");
+          writeGatePolicy(tmpDir, changed);
+        },
+      ] : [],
+    });
+    const policy = generateGatePreset("collaborative");
+    policy.gates.bootstrap = { policy: "await_human" };
+    writeGatePolicy(tmpDir, policy);
+
+    const result = await new PipelineController({
+      client,
+      sessionId: "ses_1",
+      projectDir: tmpDir,
+      policy,
+    }).run();
+
+    expect(result.status).toBe("stopped");
+    if (result.status === "stopped") expect(result.reason).toContain("gate-policy.json");
+  });
+
+  it("creates a new gate_waiting checkpoint after a human-requested revision", async () => {
+    const client = mockClient({
+      onPrompt: (_text, turn) => {
+        if (turn === 1 || turn === 3) satisfyBootstrap(tmpDir);
+      },
+      eventsForTurn: (turn) => {
+        if (turn !== 2 && turn !== 4) return [];
+        const choice = turn === 2 ? GATE_CHOICES.revise : GATE_CHOICES.approve;
+        const id = `que_revision_${turn}`;
+        return [
+          { type: "question.asked", properties: { id, sessionID: "ses_1" } },
+          {
+            type: "question.replied",
+            properties: { requestID: id, sessionID: "ses_1", answers: [[choice]] },
+          },
+        ];
+      },
+    });
+    const policy = generateGatePreset("collaborative");
+    policy.gates.bootstrap = { policy: "await_human" };
+    writeGatePolicy(tmpDir, policy);
+    const ac = new AbortController();
+    const controller = new PipelineController({
+      client,
+      sessionId: "ses_1",
+      projectDir: tmpDir,
+      policy,
+      signal: ac.signal,
+    });
+    abortAfterStage("bootstrap", ac);
+
+    await controller.run();
+
+    const { stdout } = execaSync(
+      "git",
+      ["log", "--format=%B%x00"],
+      { cwd: tmpDir },
+    );
+    expect(stdout.match(/Paper-Run-Status: gate_waiting/g)).toHaveLength(2);
   });
 
   it("stops the run when the human stops it at a gate", async () => {
@@ -575,6 +816,7 @@ describe("gates in collaborative mode", () => {
 
     const policy = generateGatePreset("collaborative");
     policy.gates["bootstrap"] = { policy: "await_human" };
+    writeGatePolicy(tmpDir, policy);
 
     const result = await new PipelineController({
       client,
@@ -586,6 +828,123 @@ describe("gates in collaborative mode", () => {
     expect(result.status).toBe("stopped");
     if (result.status === "stopped") expect(result.reason).toContain("stopped");
   });
+
+  it("rechecks the same baseline after a gate and before checkpointing", async () => {
+    const client = mockClient({
+      onPrompt: (_text, turn) => {
+        if (turn === 1) satisfyBootstrap(tmpDir);
+        if (turn === 2) {
+          const path = join(tmpDir, "PAPER.md");
+          writeFileSync(path, readFileSync(path, "utf-8").replace("Keep this thesis.", "Changed at gate."));
+        }
+      },
+      eventsForTurn: (turn) =>
+        turn >= 2
+          ? [
+              { type: "question.asked", properties: { id: "que_guard", sessionID: "ses_1" } },
+              {
+                type: "question.replied",
+                properties: {
+                  requestID: "que_guard",
+                  sessionID: "ses_1",
+                  answers: [[GATE_CHOICES.approve]],
+                },
+              },
+            ]
+          : [],
+    });
+    const policy = generateGatePreset("collaborative");
+    policy.gates["bootstrap"] = { policy: "await_human" };
+    writeGatePolicy(tmpDir, policy);
+
+    const result = await new PipelineController({
+      client,
+      sessionId: "ses_1",
+      projectDir: tmpDir,
+      policy,
+    }).run();
+
+    expect(result.status).toBe("stopped");
+    if (result.status === "stopped") expect(result.reason).toContain("central_thesis");
+    expect(readStageHistory(tmpDir).stages).toHaveLength(0);
+  });
+
+  it("refuses non-state project edits made after the waiting checkpoint", async () => {
+    const client = mockClient({
+      onPrompt: (text, turn) => {
+        if (text.includes("Bootstrap")) satisfyBootstrap(tmpDir);
+        if (turn === 2) writeFileSync(join(tmpDir, "NOTES.md"), "changed while gate was open\n");
+      },
+      eventsForTurn: (turn) =>
+        turn >= 2
+          ? [
+              { type: "question.asked", properties: { id: "que_mutation", sessionID: "ses_1" } },
+              {
+                type: "question.replied",
+                properties: {
+                  requestID: "que_mutation",
+                  sessionID: "ses_1",
+                  answers: [[GATE_CHOICES.approve]],
+                },
+              },
+            ]
+          : [],
+    });
+    const policy = generateGatePreset("collaborative");
+    policy.gates.bootstrap = { policy: "await_human" };
+    writeGatePolicy(tmpDir, policy);
+
+    const result = await new PipelineController({
+      client,
+      sessionId: "ses_1",
+      projectDir: tmpDir,
+      policy,
+    }).run();
+
+    expect(result.status).toBe("stopped");
+    if (result.status === "stopped") {
+      expect(result.reason).toContain("changed after the validated gate checkpoint");
+      expect(result.reason).toContain("NOTES.md");
+    }
+    const { stdout } = execaSync("git", ["log", "-1", "--format=%B"], { cwd: tmpDir });
+    expect(stdout).toContain("Paper-Run-Status: gate_waiting");
+    expect(stdout).not.toContain("Paper-Run-Status: completed");
+  });
+
+  it("reloads policy so a running controller sees a switch at the next gate", async () => {
+    const client = mockClient({
+      onPrompt: (_text, turn) => {
+        if (turn !== 1) return;
+        satisfyBootstrap(tmpDir);
+        const switched = generateGatePreset("collaborative");
+        switched.gates["bootstrap"] = { policy: "await_human" };
+        writeGatePolicy(tmpDir, switched);
+      },
+      eventsForTurn: (turn) =>
+        turn >= 2
+          ? [
+              { type: "question.asked", properties: { id: "que_reload", sessionID: "ses_1" } },
+              {
+                type: "question.replied",
+                properties: {
+                  requestID: "que_reload",
+                  sessionID: "ses_1",
+                  answers: [[GATE_CHOICES.approve]],
+                },
+              },
+            ]
+          : [],
+    });
+
+    const ac = new AbortController();
+    const controller = makeController(client, "autonomous", ac.signal);
+    abortAfterStage("bootstrap", ac);
+    await controller.run();
+
+    expect(
+      client._prompts.some((prompt: string) => prompt.includes('gate after stage "bootstrap"')),
+    ).toBe(true);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -593,7 +952,7 @@ describe("gates in collaborative mode", () => {
 // ---------------------------------------------------------------------------
 
 describe("permissions", () => {
-  it("auto-approves a harness validator so an unattended run does not stall", async () => {
+  it("leaves a harness validator for human approval", async () => {
     const client = mockClient({
       onPrompt: () => satisfyBootstrap(tmpDir),
       eventsForTurn: () => [
@@ -614,9 +973,7 @@ describe("permissions", () => {
     abortAfterStage("bootstrap", ac);
     await controller.run();
 
-    expect(client.permission.reply).toHaveBeenCalledWith(
-      expect.objectContaining({ requestID: "per_1", reply: "once" }),
-    );
+    expect(client.permission.reply).not.toHaveBeenCalled();
   });
 
   it("leaves an unrecognised command for the human", async () => {

@@ -1,9 +1,8 @@
 /**
  * Session lifecycle: create, resume, prompt, abort, and TUI attach.
  *
- * A paper-run run maps to one long-lived OpenCode session. The controller
- * sends stage prompts into it; the user attaches the TUI to the same session
- * and sees exactly what the controller is doing.
+ * Writer stages and human gates use the run's long-lived OpenCode session.
+ * Independent reviews use a newly created cold session for every attempt.
  */
 
 import type { OpencodeClient } from "@opencode-ai/sdk/v2";
@@ -80,18 +79,29 @@ export async function sendPrompt(
     sessionId: string;
     text: string;
     agent?: string;
+    model?: string;
     directory?: string;
   },
 ): Promise<void> {
+  const model = opts.model === undefined ? undefined : parseModelRef(opts.model);
   await unwrap(
     client.session.promptAsync({
       sessionID: opts.sessionId,
       ...(opts.directory !== undefined ? { directory: opts.directory } : {}),
       ...(opts.agent !== undefined ? { agent: opts.agent } : {}),
+      ...(model !== undefined ? { model } : {}),
       parts: [{ type: "text", text: opts.text }],
     }),
     "session prompt",
   );
+}
+
+function parseModelRef(model: string): { providerID: string; modelID: string } {
+  const separator = model.indexOf("/");
+  if (separator <= 0 || separator === model.length - 1) {
+    throw new OpencodeError(`Invalid model "${model}"; expected provider/model.`);
+  }
+  return { providerID: model.slice(0, separator), modelID: model.slice(separator + 1) };
 }
 
 /** Abort whatever the session is currently doing. */
@@ -110,6 +120,29 @@ export async function abortSession(
     // would mask the interrupt itself.
     log.debug(`abort failed (ignored): ${String(err)}`);
   }
+}
+
+/** Abort one turn and require that exact session to settle before returning. */
+export async function abortAndWaitForIdle(
+  client: OpencodeClient,
+  sessionId: string,
+  directory?: string,
+  timeoutMs = 5_000,
+): Promise<void> {
+  await unwrap(
+    client.session.abort({
+      sessionID: sessionId,
+      ...(directory !== undefined ? { directory } : {}),
+    }),
+    "session abort",
+  );
+
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await getSessionStatus(client, sessionId, directory) === "idle") return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new OpencodeError(`session ${sessionId} did not become idle after abort`);
 }
 
 export type SessionStatusType = "idle" | "busy" | "retry";
@@ -157,4 +190,3 @@ export async function showToast(
     log.debug(`toast not delivered: ${String(err)}`);
   }
 }
-

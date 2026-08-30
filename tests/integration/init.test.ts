@@ -104,7 +104,7 @@ describe("init against the real template", () => {
     const message = execaSync("git", ["log", "-1", "--format=%B"], { cwd: target }).stdout;
     const trailers = parseTrailers(message);
     expect(trailers["Paper-Run-Stage"]).toBe("bootstrap");
-    expect(trailers["Paper-Run-Status"]).toBe("completed");
+    expect(trailers["Paper-Run-Status"]).toBe("pending");
     expect(trailers["Paper-Run-Run"]).toBe(state.run_id);
     expect(trailers["Paper-Run-Mode"]).toBe("autonomous");
     expect(trailers["Paper-Run-Template"]).toBe("v0.3.0");

@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -16,12 +16,12 @@ import {
   evaluateGate,
   gateActionFor,
   decisionFromLabel,
-  switchMode,
   GATE_CHOICES,
 } from "../../src/controller/gate.js";
+import { switchOperatingMode } from "../../src/state/mode.js";
 import { generateGatePreset } from "../../src/state/gate-presets.js";
 import { writeRunState, readRunState, writeGatePolicy, readGatePolicy } from "../../src/state/store.js";
-import type { RunState } from "../../src/state/schema.js";
+import type { GatePolicy, RunState } from "../../src/state/schema.js";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -46,12 +46,17 @@ function ok<T>(data: T) {
   return Promise.resolve({ data, error: undefined });
 }
 
+function resolved(policy: GatePolicy, stageId = "paper_positioning") {
+  return { policy, action: gateActionFor(policy, stageId) };
+}
+
 /** Mock client whose event stream yields a scripted sequence. */
 function mockClient(events: unknown[] = [], overrides: Record<string, unknown> = {}): any {
   return {
     session: {
       promptAsync: vi.fn(() => ok({})),
       status: vi.fn(() => ok({})),
+      abort: vi.fn(() => ok({})),
       ...(overrides["session"] as object ?? {}),
     },
     event: {
@@ -62,6 +67,11 @@ function mockClient(events: unknown[] = [], overrides: Record<string, unknown> =
               // Let the racing poller run between events.
               await new Promise((r) => setTimeout(r, 5));
               yield e;
+            }
+            if (events.some((event: any) =>
+              event?.type === "question.replied" || event?.type === "question.rejected"
+            )) {
+              yield { type: "session.idle", properties: { sessionID: "ses_1" } };
             }
             // Then idle forever so the race is decided by the other side.
             await new Promise(() => {});
@@ -88,6 +98,7 @@ beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "paper-run-gate-"));
   mkdirSync(join(tmpDir, ".paper-run"), { recursive: true });
   writeRunState(tmpDir, makeRunState());
+  writeFileSync(join(tmpDir, "PAPER.md"), "# Paper\n\n## Operating mode\n\nMode: collaborative\n");
 });
 
 afterEach(() => {
@@ -144,7 +155,7 @@ describe("evaluateGate with an auto policy", () => {
     const client = mockClient();
     const policy = generateGatePreset("autonomous");
 
-    const decision = await evaluateGate(policy, {
+    const decision = await evaluateGate(resolved(policy), {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
@@ -161,7 +172,7 @@ describe("evaluateGate with an auto policy", () => {
     const policy = generateGatePreset("autonomous");
     policy.gates["paper_positioning"] = { policy: "skip" };
 
-    const decision = await evaluateGate(policy, {
+    const decision = await evaluateGate(resolved(policy), {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
@@ -177,7 +188,35 @@ describe("evaluateGate with an auto policy", () => {
 // ---------------------------------------------------------------------------
 
 describe("evaluateGate awaiting a human", () => {
-  it("marks the run gate_waiting and asks the agent to raise a question", async () => {
+  it("uses the resolved action even if its policy object changes later", async () => {
+    const client = mockClient([
+      { type: "question.asked", properties: { id: "que_resolved", sessionID: "ses_1" } },
+      {
+        type: "question.replied",
+        properties: {
+          requestID: "que_resolved",
+          sessionID: "ses_1",
+          answers: [[GATE_CHOICES.approve]],
+        },
+      },
+    ]);
+    const policy = generateGatePreset("collaborative");
+    const boundary = resolved(policy);
+    policy.gates.paper_positioning = { policy: "auto" };
+
+    const decision = await evaluateGate(boundary, {
+      client,
+      sessionId: "ses_1",
+      projectDir: tmpDir,
+      stageId: "paper_positioning",
+      pollIntervalMs: 50,
+    });
+
+    expect(decision.outcome).toBe("proceed");
+    expect(client.session.promptAsync).toHaveBeenCalledOnce();
+  });
+
+  it("asks the agent to raise a question for the resolved waiting gate", async () => {
     const client = mockClient([
       { type: "question.asked", properties: { id: "que_1", sessionID: "ses_1" } },
       {
@@ -187,7 +226,7 @@ describe("evaluateGate awaiting a human", () => {
     ]);
     const policy = generateGatePreset("collaborative");
 
-    const decision = await evaluateGate(policy, {
+    const decision = await evaluateGate(resolved(policy), {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
@@ -218,7 +257,7 @@ describe("evaluateGate awaiting a human", () => {
       },
     ]);
 
-    const decision = await evaluateGate(generateGatePreset("collaborative"), {
+    const decision = await evaluateGate(resolved(generateGatePreset("collaborative")), {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
@@ -240,7 +279,7 @@ describe("evaluateGate awaiting a human", () => {
       },
     ]);
 
-    const decision = await evaluateGate(generateGatePreset("collaborative"), {
+    const decision = await evaluateGate(resolved(generateGatePreset("collaborative")), {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
@@ -257,7 +296,7 @@ describe("evaluateGate awaiting a human", () => {
       { type: "question.rejected", properties: { requestID: "que_1", sessionID: "ses_1" } },
     ]);
 
-    const decision = await evaluateGate(generateGatePreset("collaborative"), {
+    const decision = await evaluateGate(resolved(generateGatePreset("collaborative")), {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
@@ -283,7 +322,7 @@ describe("evaluateGate awaiting a human", () => {
       writeRunState(tmpDir, { ...state, stage_status: "approved" });
     }, 80);
 
-    const decision = await evaluateGate(generateGatePreset("collaborative"), {
+    const decision = await evaluateGate(resolved(generateGatePreset("collaborative")), {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
@@ -303,7 +342,7 @@ describe("evaluateGate awaiting a human", () => {
       },
     ]);
 
-    const decision = await evaluateGate(generateGatePreset("collaborative"), {
+    const decision = await evaluateGate(resolved(generateGatePreset("collaborative")), {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
@@ -328,7 +367,7 @@ describe("evaluateGate released by /approve", () => {
       writeRunState(tmpDir, { ...state, stage_status: "approved" });
     }, 60);
 
-    const decision = await evaluateGate(generateGatePreset("collaborative"), {
+    const decision = await evaluateGate(resolved(generateGatePreset("collaborative")), {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
@@ -338,6 +377,7 @@ describe("evaluateGate released by /approve", () => {
 
     expect(decision.outcome).toBe("proceed");
     expect(decision.reason).toContain("/approve");
+    expect(client.session.abort).toHaveBeenCalledWith(expect.objectContaining({ sessionID: "ses_1" }));
   });
 
   it("stops when run.json flips to blocked", async () => {
@@ -352,7 +392,7 @@ describe("evaluateGate released by /approve", () => {
       });
     }, 60);
 
-    const decision = await evaluateGate(generateGatePreset("collaborative"), {
+    const decision = await evaluateGate(resolved(generateGatePreset("collaborative")), {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
@@ -380,7 +420,7 @@ describe("evaluateGate released by /approve", () => {
       writeRunState(tmpDir, { ...state, stage_status: "approved" });
     }, 60);
 
-    await evaluateGate(generateGatePreset("collaborative"), {
+    await evaluateGate(resolved(generateGatePreset("collaborative")), {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
@@ -409,7 +449,7 @@ describe("evaluateGate released by /approve", () => {
       writeRunState(tmpDir, { ...state, stage_status: "approved" });
     }, 60);
 
-    await evaluateGate(generateGatePreset("collaborative"), {
+    await evaluateGate(resolved(generateGatePreset("collaborative")), {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
@@ -431,7 +471,7 @@ describe("evaluateGate abort", () => {
     const controller = new AbortController();
     setTimeout(() => controller.abort(), 60);
 
-    const decision = await evaluateGate(generateGatePreset("collaborative"), {
+    const decision = await evaluateGate(resolved(generateGatePreset("collaborative")), {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
@@ -449,17 +489,18 @@ describe("evaluateGate abort", () => {
 // Mode switching
 // ---------------------------------------------------------------------------
 
-describe("switchMode", () => {
-  it("rewrites the policy and mirrors the mode into run.json", () => {
+describe("switchOperatingMode", () => {
+  it("aligns the policy, run.json, and PAPER.md", () => {
     const policy = generateGatePreset("collaborative");
     writeGatePolicy(tmpDir, policy);
 
-    switchMode(tmpDir, policy, "autonomous");
+    switchOperatingMode(tmpDir, "autonomous");
 
     const next = readGatePolicy(tmpDir);
     expect(next.mode).toBe("autonomous");
     expect(next.gates["paper_positioning"]?.policy).toBe("auto");
     expect(readRunState(tmpDir).mode).toBe("autonomous");
+    expect(readFileSync(join(tmpDir, "PAPER.md"), "utf-8")).toContain("Mode: autonomous");
   });
 
   it("preserves a per-gate override across the switch", () => {
@@ -468,7 +509,7 @@ describe("switchMode", () => {
     policy.gates["evidence_inventory"] = { policy: "await_human" };
     writeGatePolicy(tmpDir, policy);
 
-    switchMode(tmpDir, policy, "autonomous");
+    switchOperatingMode(tmpDir, "autonomous");
 
     const next = readGatePolicy(tmpDir);
     expect(next.gates["evidence_inventory"]?.policy).toBe("await_human");

@@ -12,6 +12,8 @@ import { version } from "./version.js";
 
 import { initCommand } from "./commands/init.js";
 import { startCommand, statusCommand, modeCommand } from "./commands/start.js";
+import { checkpointCommand } from "./commands/checkpoint.js";
+import { approveCommand } from "./commands/approve.js";
 
 const program = new Command()
   .name("paper-run")
@@ -40,7 +42,7 @@ program
 // --- start (also the default when no subcommand given) ---
 program
   .command("start", { isDefault: true })
-  .description("Launch OpenCode TUI and start the paper production pipeline")
+  .description("Verify the run checkpoint, then launch or resume the paper pipeline")
   .option("--mode <mode>", "override operating mode for this run")
   .option("--stage <stage>", "start from a specific stage")
   .option("--port <port>", "OpenCode server port", parseInt)
@@ -71,7 +73,7 @@ program
 // --- resume (convenience alias) ---
 program
   .command("resume")
-  .description("Resume the pipeline from the last checkpoint (alias for start)")
+  .description("Verify Git state and resume from the latest Paper-Run checkpoint")
   .action(async () => {
     await startCommand({});
   });
@@ -79,10 +81,14 @@ program
 // --- checkpoint ---
 program
   .command("checkpoint")
-  .description("Force a checkpoint commit at the current point")
-  .action(async () => {
-    log.warn("checkpoint command not yet implemented");
-  });
+  .description("Commit an explicit manual checkpoint from already staged changes")
+  .action(checkpointCommand);
+
+// --- approve ---
+program
+  .command("approve")
+  .description("Approve the current gate if the pipeline is waiting for a human")
+  .action(approveCommand);
 
 // --- error boundary ---
 async function main(): Promise<void> {
