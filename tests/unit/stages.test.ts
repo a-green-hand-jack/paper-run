@@ -10,6 +10,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   existsSync,
+  chmodSync,
   mkdtempSync,
   mkdirSync,
   writeFileSync,
@@ -35,6 +36,7 @@ import {
   renderSummaryRequest,
 } from "../../src/pipeline/prompts.js";
 import {
+  buildPublicationArtifacts,
   capturePublicationBaseline,
   validateStage,
   hasNonEmptySection,
@@ -88,6 +90,18 @@ function writeDefaultPublicationSources(root: string): void {
 
 function pdf(body = "artifact"): string {
   return `%PDF-1.7\n${body}\n%%EOF\n`;
+}
+
+function writeFakeLatexmk(root: string): string {
+  const bin = join(root, "bin");
+  mkdirSync(bin, { recursive: true });
+  const executable = join(bin, "latexmk");
+  writeFileSync(
+    executable,
+    "#!/bin/sh\njob=main\noutdir=.\nfor arg in \"$@\"; do\n  case \"$arg\" in\n    -jobname=*) job=${arg#-jobname=} ;;\n    -outdir=*) outdir=${arg#-outdir=} ;;\n  esac\ndone\nmkdir -p \"$outdir\"\nprintf '%s\\n' '%PDF-1.7' 'built' '%%EOF' > \"$outdir/$job.pdf\"\n",
+  );
+  chmodSync(executable, 0o755);
+  return bin;
 }
 
 describe("harness checkout presence", () => {
@@ -630,6 +644,44 @@ describe("validateStage", () => {
     expect(existsSync(join(tmpDir, "make-ran"))).toBe(false);
   });
 
+  it("executes a strictly declared build through controller-owned latexmk argv", async () => {
+    writeDefaultPublicationSources(tmpDir);
+    writeBuildProfile(tmpDir, {
+      name: "test-pdf",
+      command: ["make", "pdf", "VARIANT=draft"],
+      output: "paper/paper.pdf",
+    });
+    const baseline = capturePublicationBaseline(tmpDir);
+    const previousPath = process.env["PATH"];
+    process.env["PATH"] = `${writeFakeLatexmk(tmpDir)}:${previousPath ?? ""}`;
+    try {
+      expect(await buildPublicationArtifacts(tmpDir, { baseline })).toEqual({ passed: true, diagnostic: "" });
+      expect((await validateStage(publicationOnlyStage(), tmpDir)).passed).toBe(true);
+    } finally {
+      process.env["PATH"] = previousPath;
+    }
+  });
+
+  it("refuses a build profile modified after the stage baseline", async () => {
+    writeDefaultPublicationSources(tmpDir);
+    writeBuildProfile(tmpDir, {
+      name: "test-pdf",
+      command: ["make", "pdf"],
+      output: "paper/paper.pdf",
+    });
+    const baseline = capturePublicationBaseline(tmpDir);
+    writeBuildProfile(tmpDir, {
+      name: "test-pdf",
+      command: ["make", "pdf", "VARIANT=draft"],
+      output: "paper/paper.pdf",
+    });
+
+    const result = await buildPublicationArtifacts(tmpDir, { baseline });
+    expect(result.passed).toBe(false);
+    expect(result.diagnostic).toContain("differs from the stage baseline");
+    expect(existsSync(join(tmpDir, "paper", "paper.pdf"))).toBe(false);
+  });
+
   it("uses paper/main.pdf as the fallback output without executing make", async () => {
     writeDefaultPublicationSources(tmpDir);
     writeFileSync(join(tmpDir, "paper", "main.pdf"), pdf());
@@ -801,7 +853,7 @@ describe("validateStage", () => {
     const result = await validateStage(publicationOnlyStage(), tmpDir, {
       publicationBaseline: baseline,
     });
-    expect(result.failures.join(" ")).toContain("output declaration changed during this stage");
+    expect(result.failures.join(" ")).toContain("paper-build.json changed during this stage");
   });
 
   it("does not include validator stdout or stderr in failure diagnostics", async () => {

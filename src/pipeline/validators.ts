@@ -13,7 +13,8 @@
 
 import { closeSync, existsSync, lstatSync, openSync, readFileSync, readSync, readdirSync, statSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { isAbsolute, join, posix, resolve, win32 } from "node:path";
+import { basename, dirname, isAbsolute, join, posix, relative, resolve, win32 } from "node:path";
+import { execa } from "execa";
 
 import { runCheck } from "../harness/harness.js";
 import { PAPER_RUN_DIR } from "../utils/constants.js";
@@ -37,6 +38,11 @@ export interface ValidationResult {
 }
 
 export type PublicationBaseline = Readonly<Record<string, string | null>>;
+
+export interface PublicationBuildResult {
+  passed: boolean;
+  diagnostic: string;
+}
 
 export interface ValidationOptions {
   publicationBaseline?: PublicationBaseline;
@@ -235,6 +241,7 @@ interface BuildCommand {
 }
 
 interface BuildProfile {
+  layout: "canonical-variants" | "external-latex";
   sourceRoot: string;
   entrypoint: string;
   bibliography: string | null;
@@ -246,6 +253,12 @@ const VARIANT_RE = /^VARIANT=[a-z0-9][a-z0-9._-]{0,63}$/;
 const PROFILE_SCHEMA = "paper-build-profile-v1";
 const PROFILE_LAYOUTS = new Set(["canonical-variants", "external-latex"]);
 const CONTROL_ROOTS = new Set([".agents", ".git", ".paper-run", "dist", "release", "releases"]);
+const PROFILE_BASELINE_KEY = "\0paper-build-profile";
+const GENERATED_TEX_SUFFIXES = [
+  ".aux", ".bbl", ".bcf", ".blg", ".dvi", ".fdb_latexmk", ".fls", ".lof",
+  ".log", ".lot", ".nav", ".out", ".ps", ".run.xml", ".snm", ".synctex.gz",
+  ".toc", ".vrb", ".xdv",
+];
 const CANONICAL_BUILDS: BuildCommand[] = [
   { name: "draft", command: ["make", "pdf", "VARIANT=draft"], output: "paper/main.pdf" },
   {
@@ -262,6 +275,7 @@ const CANONICAL_BUILDS: BuildCommand[] = [
 ];
 
 const FALLBACK_PROFILE: BuildProfile = {
+  layout: "external-latex",
   sourceRoot: "paper",
   entrypoint: "paper/main.tex",
   bibliography: "paper/refs.bib",
@@ -274,25 +288,24 @@ function validatePublicationArtifacts(
   baseline?: PublicationBaseline,
 ): { passed: boolean; diagnostic: string } {
   const root = resolve(projectDir);
-  const profilePath = join(root, ".agents", "paper-build.json");
-  let profile = FALLBACK_PROFILE;
-  const profileStat = lstatSync(profilePath, { throwIfNoEntry: false });
-
-  if (profileStat) {
-    try {
-      if (profileStat.isSymbolicLink() || !profileStat.isFile()) {
-        throw new Error("profile must be a regular file");
-      }
-      profile = parseBuildProfile(JSON.parse(readFileSync(profilePath, "utf-8")));
-    } catch (err) {
-      return {
-        passed: false,
-        diagnostic: `invalid .agents/paper-build.json (${safeErrorMessage(err)})`,
-      };
-    }
+  let loaded: ReturnType<typeof loadBuildProfile>;
+  try {
+    loaded = loadBuildProfile(root);
+  } catch (err) {
+    return {
+      passed: false,
+      diagnostic: `invalid .agents/paper-build.json (${safeErrorMessage(err)})`,
+    };
   }
+  const { profile, serialized } = loaded;
 
   try {
+    if (
+      baseline?.[PROFILE_BASELINE_KEY] !== undefined &&
+      baseline[PROFILE_BASELINE_KEY] !== digestText(serialized)
+    ) {
+      return { passed: false, diagnostic: "paper-build.json changed during this stage" };
+    }
     const newestSource = newestSourceMtime(root, profile);
     for (const build of profile.builds) {
       if (!build.output.endsWith(".pdf")) {
@@ -327,22 +340,127 @@ function validatePublicationArtifacts(
 /** Capture configured artifact digests before an agent turn. */
 export function capturePublicationBaseline(projectDir: string): PublicationBaseline {
   const root = resolve(projectDir);
-  const profilePath = join(root, ".agents", "paper-build.json");
-  const profileStat = lstatSync(profilePath, { throwIfNoEntry: false });
-  let profile = FALLBACK_PROFILE;
-  if (profileStat) {
-    if (profileStat.isSymbolicLink() || !profileStat.isFile()) {
-      throw new Error("invalid .agents/paper-build.json (profile must be a regular file)");
-    }
-    profile = parseBuildProfile(JSON.parse(readFileSync(profilePath, "utf-8")));
-  }
+  const { profile, serialized } = loadBuildProfile(root);
 
   const baseline: Record<string, string | null> = {};
+  baseline[PROFILE_BASELINE_KEY] = digestText(serialized);
   for (const build of profile.builds) {
     const artifact = inspectRegularFile(root, build.output);
     baseline[build.output] = artifact ? digestFile(join(root, build.output)) : null;
   }
   return Object.freeze(baseline);
+}
+
+/** Execute declared publication builds through controller-owned latexmk argv. */
+export async function buildPublicationArtifacts(
+  projectDir: string,
+  options: {
+    baseline?: PublicationBaseline;
+    timeoutMs?: number;
+    signal?: AbortSignal;
+  } = {},
+): Promise<PublicationBuildResult> {
+  const root = resolve(projectDir);
+  let profile: BuildProfile;
+  try {
+    const loaded = loadBuildProfile(root);
+    profile = loaded.profile;
+    const baselineDigest = options.baseline?.[PROFILE_BASELINE_KEY];
+    if (baselineDigest !== undefined && baselineDigest !== digestText(loaded.serialized)) {
+      throw new Error("paper-build.json differs from the stage baseline");
+    }
+  } catch (err) {
+    return { passed: false, diagnostic: `publication build refused (${safeErrorMessage(err)})` };
+  }
+
+  const deadline = Date.now() + (options.timeoutMs ?? 10 * 60_000);
+  for (const build of profile.builds) {
+    if (options.signal?.aborted) {
+      return { passed: false, diagnostic: `[${build.name}] build canceled` };
+    }
+    try {
+      const sourceRoot = join(root, profile.sourceRoot);
+      const output = join(root, build.output);
+      const outputDirectory = dirname(output);
+      const outputDirectoryRelative = relative(root, outputDirectory) || ".";
+      assertPathHasNoSymlinks(root, profile.sourceRoot);
+      assertSourceTreeHasNoSymlinks(sourceRoot);
+      if (!inspectRegularFile(root, profile.entrypoint)) {
+        throw new Error("entrypoint is missing or not a regular file");
+      }
+      assertPathHasNoSymlinks(root, outputDirectoryRelative);
+      const outputDirectoryStat = statSync(outputDirectory, { throwIfNoEntry: false });
+      if (!outputDirectoryStat?.isDirectory()) throw new Error("output directory is missing");
+      const outputStat = lstatSync(output, { throwIfNoEntry: false });
+      if (outputStat?.isSymbolicLink() || (outputStat && !outputStat.isFile())) {
+        throw new Error("output must be a regular file or absent");
+      }
+
+      const entrypoint = profile.layout === "canonical-variants"
+        ? `variants/${(build.command[2]?.slice("VARIANT=".length) ?? "draft").replaceAll("-", "_")}.tex`
+        : posix.relative(profile.sourceRoot, profile.entrypoint);
+      const outputDirectoryArg = relative(sourceRoot, outputDirectory) || ".";
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) throw Object.assign(new Error("build deadline exceeded"), { timedOut: true });
+      await execa("latexmk", [
+        "-norc",
+        "-no-shell-escape",
+        "-g",
+        "-pdf",
+        `-jobname=${basename(build.output, ".pdf")}`,
+        `-outdir=${outputDirectoryArg}`,
+        "-interaction=nonstopmode",
+        "-halt-on-error",
+        entrypoint,
+      ], {
+        cwd: sourceRoot,
+        timeout: remaining,
+        ...(options.signal ? { cancelSignal: options.signal } : {}),
+        env: {
+          ...process.env,
+          openin_any: "p",
+          openout_any: "p",
+          shell_escape: "f",
+        },
+      });
+    } catch (err) {
+      const failure = err as { timedOut?: boolean; isCanceled?: boolean; code?: string; exitCode?: number };
+      const category = failure.timedOut
+        ? "timed out"
+        : failure.isCanceled || options.signal?.aborted
+          ? "canceled"
+          : failure.code === "ENOENT"
+            ? "tool is unavailable"
+            : typeof failure.exitCode === "number"
+              ? `failed with exit code ${failure.exitCode}`
+              : "failed";
+      return { passed: false, diagnostic: `[${build.name}] build ${category}` };
+    }
+  }
+  return { passed: true, diagnostic: "" };
+}
+
+function assertSourceTreeHasNoSymlinks(directory: string): void {
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isSymbolicLink()) throw new Error("source_root contains a symlink");
+    if (entry.isDirectory()) assertSourceTreeHasNoSymlinks(path);
+  }
+}
+
+function loadBuildProfile(root: string): { profile: BuildProfile; serialized: string } {
+  const profilePath = join(root, ".agents", "paper-build.json");
+  const profileStat = lstatSync(profilePath, { throwIfNoEntry: false });
+  if (!profileStat) {
+    const serialized = JSON.stringify(FALLBACK_PROFILE);
+    return { profile: FALLBACK_PROFILE, serialized };
+  }
+  if (profileStat.isSymbolicLink() || !profileStat.isFile()) {
+    throw new Error("invalid .agents/paper-build.json (profile must be a regular file)");
+  }
+  if (profileStat.size > 64 * 1024) throw new Error("paper-build.json is too large");
+  const serialized = readFileSync(profilePath, "utf-8");
+  return { profile: parseBuildProfile(JSON.parse(serialized)), serialized };
 }
 
 function parseBuildProfile(value: unknown): BuildProfile {
@@ -393,6 +511,7 @@ function parseBuildProfile(value: unknown): BuildProfile {
   if (!Array.isArray(profile["builds"]) || profile["builds"].length === 0) {
     throw new Error("builds must be a non-empty array");
   }
+  if (profile["builds"].length > 8) throw new Error("builds must contain at most 8 entries");
   const builds = profile["builds"].map((build, index) => parseBuildCommand(build, index));
   if (new Set(builds.map((build) => build.name)).size !== builds.length) {
     throw new Error("build names must be unique");
@@ -419,7 +538,13 @@ function parseBuildProfile(value: unknown): BuildProfile {
       throw new Error("canonical-variants profile must use the standard declarations");
     }
   }
-  return { sourceRoot, entrypoint, bibliography, builds };
+  return {
+    layout: profile["layout"] as BuildProfile["layout"],
+    sourceRoot,
+    entrypoint,
+    bibliography,
+    builds,
+  };
 }
 
 function parseBuildCommand(value: unknown, index: number): BuildCommand {
@@ -496,6 +621,10 @@ function digestFile(path: string): string {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
+function digestText(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
 function hasBasicPdfStructure(path: string, size: bigint): boolean {
   if (size < 11n || size > BigInt(Number.MAX_SAFE_INTEGER)) return false;
   const fd = openSync(path, "r");
@@ -527,6 +656,7 @@ function newestSourceMtime(root: string, profile: BuildProfile): bigint {
       if (outputs.has(path)) continue;
       const stat = lstatSync(path, { bigint: true });
       if (entry.isDirectory()) visit(path);
+      else if (GENERATED_TEX_SUFFIXES.some((suffix) => entry.name.endsWith(suffix))) continue;
       else if (stat.mtimeNs > newest) newest = stat.mtimeNs;
     }
   };

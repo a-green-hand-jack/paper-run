@@ -43,7 +43,11 @@ import { RunStateSchema, type GatePolicy, type StageHistory, type StageRecord } 
 import { remainingStages, stageNumber, TOTAL_STAGES } from "../pipeline/stages.js";
 import type { Stage } from "../pipeline/stages.js";
 import { renderStagePrompt, renderRemediationPrompt } from "../pipeline/prompts.js";
-import { capturePublicationBaseline, validateStage } from "../pipeline/validators.js";
+import {
+  buildPublicationArtifacts,
+  capturePublicationBaseline,
+  validateStage,
+} from "../pipeline/validators.js";
 import type { PublicationBaseline, ValidationResult } from "../pipeline/validators.js";
 import {
   captureLockedContractBaseline,
@@ -237,7 +241,8 @@ export class PipelineController {
       if (contractStop) return contractStop;
 
       updateRunState(this.opts.projectDir, { stage_status: "validating" });
-      validation = await validateStage(stage, this.opts.projectDir, { publicationBaseline });
+      validation = await this.validateStageAttempt(stage, publicationBaseline);
+      if (this.aborted()) return { status: "interrupted" };
 
       if (validation.passed) break;
 
@@ -345,7 +350,8 @@ export class PipelineController {
     const contractStop = await this.enforceLockedContracts(stage, contractBaseline);
     if (contractStop) return contractStop;
 
-    const validation = await validateStage(stage, this.opts.projectDir, { publicationBaseline });
+    const validation = await this.validateStageAttempt(stage, publicationBaseline);
+    if (this.aborted()) return { status: "interrupted" };
     if (!validation.passed) {
       const reason = `validation failed after revision: ${validation.failures.join("; ")}`;
       await this.markBlocked(stage, reason);
@@ -404,8 +410,12 @@ export class PipelineController {
     log.step(`Revalidating checkpoint before gate at "${stage.name}"`);
     const startedAt = new Date().toISOString();
     let contractBaseline: LockedContractBaseline;
+    let publicationBaseline: PublicationBaseline | undefined;
     try {
       contractBaseline = await captureLockedContractBaseline(this.opts.projectDir);
+      if (stage.id === "publication_build") {
+        publicationBaseline = capturePublicationBaseline(this.opts.projectDir);
+      }
     } catch (err) {
       const reason = `locked-contract baseline unavailable at HEAD: ${describeError(err)}`;
       await this.markBlocked(stage, reason);
@@ -435,7 +445,12 @@ export class PipelineController {
     }
     if (decision.outcome === "revise") {
       log.step(`Revising "${stage.name}" per human guidance`);
-      return this.rerunAfterRevision(stage, decision.guidance, contractBaseline);
+      return this.rerunAfterRevision(
+        stage,
+        decision.guidance,
+        contractBaseline,
+        publicationBaseline,
+      );
     }
 
     const contractStopBeforeCheckpoint = await this.enforceLockedContracts(stage, contractBaseline);
@@ -637,6 +652,51 @@ export class PipelineController {
         { hint: "Add a narrow project permission rule, or rerun without --headless and approve it in the TUI." },
       );
     }
+  }
+
+  private async validateStageAttempt(
+    stage: Stage,
+    publicationBaseline?: PublicationBaseline,
+  ): Promise<ValidationResult> {
+    const options = { publicationBaseline };
+    if (stage.id !== "publication_build") {
+      return validateStage(stage, this.opts.projectDir, options);
+    }
+
+    const preflight = await validateStage(stage, this.opts.projectDir, options);
+    const prerequisiteFailures = preflight.checks.filter(
+      (check) => check.required && !check.passed && check.name !== "publication-build",
+    );
+    if (prerequisiteFailures.length > 0) return preflight;
+
+    const publicationBuild = await buildPublicationArtifacts(this.opts.projectDir, {
+      ...(publicationBaseline ? { baseline: publicationBaseline } : {}),
+      timeoutMs: stage.timeoutMs,
+      ...(this.opts.signal ? { signal: this.opts.signal } : {}),
+    });
+    if (this.aborted()) {
+      return {
+        passed: false,
+        checks: [],
+        failures: [publicationBuild.diagnostic || "publication build canceled"],
+      };
+    }
+    const validation = await validateStage(stage, this.opts.projectDir, options);
+    if (publicationBuild.passed) return validation;
+
+    return {
+      passed: false,
+      checks: [
+        ...validation.checks,
+        {
+          name: "publication-build-execution",
+          passed: false,
+          required: true,
+          message: publicationBuild.diagnostic,
+        },
+      ],
+      failures: [...validation.failures, publicationBuild.diagnostic],
+    };
   }
 
   private async gate(
