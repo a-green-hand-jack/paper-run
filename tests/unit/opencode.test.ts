@@ -147,6 +147,25 @@ describe("classifyEvent", () => {
     expect(e).toMatchObject({ kind: "permission", requestID: "per_1", permission: "bash" });
   });
 
+  it("normalizes permission.v2.asked data", () => {
+    const e = classifyEvent({
+      type: "permission.v2.asked",
+      data: {
+        id: "per_v2",
+        sessionID: "ses_child",
+        action: "shell.execute",
+        resources: ["git status"],
+      },
+    } as any);
+    expect(e).toMatchObject({
+      kind: "permission",
+      requestID: "per_v2",
+      sessionID: "ses_child",
+      permission: "shell.execute",
+      raw: { permission: "shell.execute", patterns: ["git status"] },
+    });
+  });
+
   it("classifies session.error", () => {
     const e = classifyEvent({
       type: "session.error",
@@ -293,7 +312,10 @@ describe("abortAndWaitForIdle", () => {
 
     await abortAndWaitForIdle(client, "ses_1", "/paper", 500);
 
-    expect(client.session.abort).toHaveBeenCalledWith({ sessionID: "ses_1", directory: "/paper" });
+    expect(client.session.abort).toHaveBeenCalledWith(
+      { sessionID: "ses_1", directory: "/paper" },
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
     expect(client.session.status).toHaveBeenCalledTimes(2);
   });
 });
@@ -380,16 +402,37 @@ describe("waitForIdle", () => {
     expect(seen.some((e) => e.kind === "question")).toBe(true);
   });
 
-  it("ignores events from other sessions", async () => {
+  it("observes child permissions without treating child idle as parent completion", async () => {
     const seen: RelevantEvent[] = [];
     const client = mockClient({
-      session: { status: vi.fn(() => ok({ ses_1: { type: "busy" } })) },
+      session: {
+        status: vi.fn(() => ok({ ses_1: { type: "busy" } })),
+        get: vi.fn(({ sessionID }: { sessionID: string }) =>
+          sessionID === "ses_OTHER"
+            ? Promise.reject(new Error("session disappeared"))
+            : ok(sessionID === "ses_CHILD"
+              ? { id: "ses_CHILD", parentID: "ses_1" }
+              : { id: sessionID }),
+        ),
+      },
       event: {
         subscribe: vi.fn(() =>
           Promise.resolve({
             stream: streamOf([
               { type: "question.asked", properties: { id: "que_OTHER", sessionID: "ses_OTHER" } },
               { type: "session.idle", properties: { sessionID: "ses_OTHER" } },
+              {
+                type: "permission.asked",
+                properties: { id: "per_MISSING", permission: "bash" },
+              },
+              {
+                type: "permission.asked",
+                properties: { id: "per_OTHER", sessionID: "ses_OTHER", permission: "bash" },
+              },
+              {
+                type: "permission.asked",
+                properties: { id: "per_CHILD", sessionID: "ses_CHILD", permission: "bash" },
+              },
               { type: "question.asked", properties: { id: "que_MINE", sessionID: "ses_1" } },
               { type: "session.idle", properties: { sessionID: "ses_1" } },
             ])(),
@@ -406,12 +449,43 @@ describe("waitForIdle", () => {
       },
     });
 
-    // Only our session's events are delivered. The foreign question and the
-    // foreign idle are both filtered out — the latter would otherwise have
-    // ended the wait before our own events arrived.
-    expect(seen).toHaveLength(2);
-    expect(seen[0]).toMatchObject({ kind: "question", requestID: "que_MINE" });
-    expect(seen[1]).toMatchObject({ kind: "idle", sessionID: "ses_1" });
+    // The unrelated session is ignored, while a verified child permission is
+    // surfaced because it can block the parent turn.
+    expect(seen).toHaveLength(3);
+    expect(seen[0]).toMatchObject({ kind: "permission", requestID: "per_CHILD" });
+    expect(seen[1]).toMatchObject({ kind: "question", requestID: "que_MINE" });
+    expect(seen[2]).toMatchObject({ kind: "idle", sessionID: "ses_1" });
+  });
+
+  it("applies the stage timeout while verifying permission lineage", async () => {
+    const client = mockClient({
+      session: {
+        status: vi.fn(() => ok({ ses_1: { type: "busy" } })),
+        get: vi.fn((_parameters: unknown, options?: { signal?: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            options?.signal?.addEventListener(
+              "abort",
+              () => reject(new DOMException("aborted", "AbortError")),
+              { once: true },
+            );
+          }),
+        ),
+      },
+      event: {
+        subscribe: vi.fn(() => Promise.resolve({
+          stream: streamOf([{
+            type: "permission.asked",
+            properties: { id: "per_OTHER", sessionID: "ses_OTHER", permission: "bash" },
+          }])(),
+        })),
+      },
+    });
+
+    await expect(waitForIdle(client, {
+      sessionId: "ses_1",
+      stageId: "citation_integration",
+      timeoutMs: 20,
+    })).rejects.toThrow(/citation_integration.*timed out/);
   });
 });
 

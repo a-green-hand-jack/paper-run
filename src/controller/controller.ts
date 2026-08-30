@@ -61,7 +61,13 @@ import {
 } from "../pipeline/material-assessment.js";
 import type { Verdict } from "../pipeline/material-assessment.js";
 
-import { createSession, sendPrompt, abortSession, showToast } from "../opencode/session.js";
+import {
+  createSession,
+  sendPrompt,
+  abortSession,
+  abortAndWaitForIdle,
+  showToast,
+} from "../opencode/session.js";
 import { waitForIdle } from "../opencode/events.js";
 import type { RelevantEvent } from "../opencode/events.js";
 
@@ -610,8 +616,24 @@ export class PipelineController {
     });
     if (!approved && this.opts.unattended) {
       updateRunState(this.opts.projectDir, { stage_status: "pending" });
+      const childSessionId = payload.sessionID && payload.sessionID !== this.activeSessionId
+        ? payload.sessionID
+        : undefined;
+      const source = childSessionId
+        ? " requested by a child session"
+        : "";
+      const sessions = childSessionId
+        ? [childSessionId, this.activeSessionId]
+        : [this.activeSessionId];
+      for (const sessionId of sessions) {
+        try {
+          await abortAndWaitForIdle(this.opts.client, sessionId, this.opts.projectDir);
+        } catch (err) {
+          log.warn(`Permission cleanup for session ${sessionId} did not settle: ${String(err)}`);
+        }
+      }
       throw new PaperRunError(
-        `Headless run requires approval for the ${payload.permission} permission.`,
+        `Headless run requires approval for the ${payload.permission} permission${source}.`,
         { hint: "Add a narrow project permission rule, or rerun without --headless and approve it in the TUI." },
       );
     }

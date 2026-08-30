@@ -118,6 +118,7 @@ function mockClient(opts: MockOpts = {}): any {
   const promptArgs: any[] = [];
   let promptedSessionId = "ses_1";
   let reviewSession = 0;
+  const abortedSessions = new Set<string>();
 
   const client: any = {
     _prompts: prompts,
@@ -129,13 +130,20 @@ function mockClient(opts: MockOpts = {}): any {
         prompts.push(text);
         promptArgs.push(args);
         promptedSessionId = args.sessionID;
+        abortedSessions.delete(promptedSessionId);
         turn += 1;
         opts.onPrompt?.(text, turn);
         return ok({});
       }),
       // Always busy on first ask so waitForIdle listens to the stream.
-      status: vi.fn(() => ok({ [promptedSessionId]: { type: "busy" } })),
-      abort: vi.fn(() => ok({})),
+      status: vi.fn(() => ok(abortedSessions.has(promptedSessionId)
+        ? {}
+        : { [promptedSessionId]: { type: "busy" } })),
+      abort: vi.fn(({ sessionID }: { sessionID: string }) => {
+        abortedSessions.add(sessionID);
+        return ok({});
+      }),
+      get: vi.fn(({ sessionID }: { sessionID: string }) => ok({ id: sessionID })),
     },
     event: {
       subscribe: vi.fn(() =>
@@ -1028,5 +1036,50 @@ describe("permissions", () => {
     await expect(controller.run()).rejects.toThrow(/Headless run requires approval for the bash permission/);
     expect(readRunState(tmpDir).stage_status).toBe("pending");
     expect(client.permission.reply).not.toHaveBeenCalled();
+  });
+
+  it("fails fast on a permission requested by a delegated child session", async () => {
+    const client = mockClient({
+      onPrompt: () => satisfyBootstrap(tmpDir),
+      eventsForTurn: () => [
+        {
+          type: "permission.asked",
+          properties: {
+            id: "per_child",
+            sessionID: "ses_child",
+            permission: "bash",
+            metadata: { command: "python3 -c 'arbitrary code'" },
+          },
+        },
+      ],
+    });
+    const policy = generateGatePreset("autonomous");
+    writeGatePolicy(tmpDir, policy);
+    client.session.get.mockImplementation(({ sessionID }: { sessionID: string }) =>
+      ok(sessionID === "ses_child"
+        ? { id: "ses_child", parentID: "ses_1" }
+        : { id: sessionID }),
+    );
+    const controller = new PipelineController({
+      client,
+      sessionId: "ses_1",
+      projectDir: tmpDir,
+      policy,
+      unattended: true,
+    });
+
+    await expect(controller.run()).rejects.toThrow(
+      /Headless run requires approval for the bash permission requested by a child session/,
+    );
+    expect(readRunState(tmpDir).stage_status).toBe("pending");
+    expect(client.permission.reply).not.toHaveBeenCalled();
+    expect(client.session.abort).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionID: "ses_child" }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(client.session.abort).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionID: "ses_1" }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 });

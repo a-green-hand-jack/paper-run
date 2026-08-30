@@ -39,7 +39,11 @@ export type RelevantEvent =
  */
 export function classifyEvent(event: Event): RelevantEvent {
   const type = event.type;
-  const props = (event as { properties?: Record<string, unknown> }).properties ?? {};
+  const envelope = event as unknown as {
+    properties?: Record<string, unknown>;
+    data?: Record<string, unknown>;
+  };
+  const props = envelope.properties ?? envelope.data ?? {};
   const sessionID = typeof props["sessionID"] === "string" ? props["sessionID"] : "";
 
   switch (type) {
@@ -98,8 +102,28 @@ export function classifyEvent(event: Event): RelevantEvent {
     case "permission.asked":
     case "permission.v2.asked": {
       const requestID = typeof props["id"] === "string" ? props["id"] : "";
-      const permission = typeof props["permission"] === "string" ? props["permission"] : "";
-      return { kind: "permission", sessionID, requestID, permission, raw: props };
+      const permission = typeof props["permission"] === "string"
+        ? props["permission"]
+        : typeof props["action"] === "string"
+          ? props["action"]
+          : "unknown";
+      return {
+        kind: "permission",
+        sessionID,
+        requestID,
+        permission,
+        raw: {
+          ...props,
+          id: requestID,
+          sessionID,
+          permission,
+          ...(Array.isArray(props["patterns"])
+            ? { patterns: props["patterns"] }
+            : Array.isArray(props["resources"])
+              ? { patterns: props["resources"] }
+              : {}),
+        },
+      };
     }
 
     default:
@@ -131,6 +155,7 @@ export async function* subscribeEvents(
     try {
       const result = await client.event.subscribe(
         opts.directory !== undefined ? { directory: opts.directory } : {},
+        opts.signal ? { signal: opts.signal } : undefined,
       );
       stream = result.stream as AsyncIterable<Event>;
     } catch (err) {
@@ -212,8 +237,10 @@ export async function waitForIdle(
   }, timeoutMs);
 
   try {
+    // Subscribe to the whole project stream so permission requests made by a
+    // delegated child cannot invisibly strand a headless parent. Completion is
+    // still scoped to the prompted session below.
     const events = subscribeEvents(client, {
-      sessionId: opts.sessionId,
       ...(opts.directory !== undefined ? { directory: opts.directory } : {}),
       signal: controller.signal,
     });
@@ -235,7 +262,7 @@ export async function waitForIdle(
       }
     }
 
-    const status = await getStatusSafely(client, opts.sessionId, opts.directory);
+    const status = await getStatusSafely(client, opts.sessionId, opts.directory, controller.signal);
     if (status === "idle") {
       log.debug(`session ${opts.sessionId} already idle`);
       return;
@@ -243,7 +270,26 @@ export async function waitForIdle(
 
     for (let next = await firstEvent; !next.done; next = await iterator.next()) {
       const event = next.value;
-      if (opts.onEvent) await opts.onEvent(event);
+      const targetEvent = event.kind === "permission"
+        ? event.sessionID === opts.sessionId
+        : !("sessionID" in event) || !event.sessionID || event.sessionID === opts.sessionId;
+
+      const childPermission = event.kind === "permission" && !targetEvent
+        ? await isDescendantSession(
+            client,
+            opts.sessionId,
+            event.sessionID,
+            opts.directory,
+            controller.signal,
+          )
+        : false;
+
+      // Descendant permissions can block the parent turn, but unrelated
+      // sessions and child idle/question events must not steer the parent.
+      if (opts.onEvent && (targetEvent || childPermission)) {
+        await opts.onEvent(event);
+      }
+      if (!targetEvent) continue;
 
       if (event.kind === "idle") {
         log.debug(`session ${opts.sessionId} idle`);
@@ -259,11 +305,47 @@ export async function waitForIdle(
     if (timedOut) throw new StageTimeoutError(stageId, timeoutMs);
     if (opts.signal?.aborted) return;
     throw new OpencodeError("event stream ended before session went idle");
+  } catch (err) {
+    if (timedOut) throw new StageTimeoutError(stageId, timeoutMs);
+    if (opts.signal?.aborted) return;
+    throw err;
   } finally {
     clearTimeout(timer);
     opts.signal?.removeEventListener("abort", onAbort);
     controller.abort();
   }
+}
+
+async function isDescendantSession(
+  client: OpencodeClient,
+  parentSessionId: string,
+  candidateSessionId: string,
+  directory?: string,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (!candidateSessionId || candidateSessionId === parentSessionId) return false;
+
+  let sessionId = candidateSessionId;
+  const visited = new Set<string>();
+  for (let depth = 0; depth < 32; depth += 1) {
+    if (visited.has(sessionId)) return false;
+    visited.add(sessionId);
+
+    let result;
+    try {
+      result = await client.session.get({
+        sessionID: sessionId,
+        ...(directory !== undefined ? { directory } : {}),
+      }, signal ? { signal } : undefined);
+    } catch (err) {
+      if (signal?.aborted) throw err;
+      return false;
+    }
+    if (result.error || !result.data?.parentID) return false;
+    if (result.data.parentID === parentSessionId) return true;
+    sessionId = result.data.parentID;
+  }
+  return false;
 }
 
 /**
@@ -284,7 +366,7 @@ async function waitForBusy(
 
   while (Date.now() < deadline) {
     if (signal.aborted) return false;
-    const status = await getStatusSafely(client, sessionId, directory);
+    const status = await getStatusSafely(client, sessionId, directory, signal);
     if (status !== "idle") return true;
     await sleep(interval, signal);
   }
@@ -296,13 +378,18 @@ async function getStatusSafely(
   client: OpencodeClient,
   sessionId: string,
   directory?: string,
+  signal?: AbortSignal,
 ): Promise<"idle" | "busy" | "retry"> {
   try {
-    const result = await client.session.status(directory !== undefined ? { directory } : {});
+    const result = await client.session.status(
+      directory !== undefined ? { directory } : {},
+      signal ? { signal } : undefined,
+    );
     const map = (result.data ?? {}) as Record<string, { type?: string } | undefined>;
     const type = map[sessionId]?.type;
     return type === "busy" || type === "retry" ? type : "idle";
-  } catch {
+  } catch (err) {
+    if (signal?.aborted) throw err;
     // If status is unavailable, fall back to waiting for the event.
     return "busy";
   }

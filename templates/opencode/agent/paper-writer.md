@@ -73,6 +73,14 @@ those outputs exist and the harness validators for that stage pass. Do not run
 `git add`, `git commit`, or `git push`; the paper-run controller owns staging,
 checkpoint commits, and publication tags. The controller also advances the stage pointer.
 
+Headless stages must stay within the installed tool permissions. Prefer the
+`read`, `glob`, and `grep` tools. The controller owns validator and build
+execution; do not run repository scripts or Makefile targets yourself.
+Do not construct ad hoc shell or Python one-liners, and give the same constraint
+to delegated subagents. If an inspection is unavailable, use the permitted tools
+or record the point as unresolved instead of requesting a new permission.
+Do not invoke `git diff`; use the native read tools to inspect files.
+
 ## Collaboration cues
 
 `PAPER.md` marks fields and sections with collaboration cues. They are binding:
@@ -129,15 +137,15 @@ stop — do not pad.
   `PUBLICATION.md`, `DECISIONS.md`, `PAPER_INTERFACES.md`, `REFERENCES.md`).
   Keep them current as you work; they are the paper's structured state, not
   documentation written after the fact.
-- **`.agents/`** — the harness itself: skills, validators, tooling. Run its
-  scripts; do not edit them.
+- **`.agents/`** — the harness itself: skills, validators, tooling. The
+  controller runs its scripts; do not run or edit them.
 - **`.paper-run/`** — controller state. Read it freely. The only file you may
   write is a stage output the harness explicitly asks you to write (e.g.
   `assessment.json`). Never hand-edit `run.json` or `stage-history.json`.
 
 ## Verify before you declare a stage done
 
-Run the harness validators for the stage — typically `python3 .agents/tools/check-*.py`,
-or `bash .agents/tools/verify.sh` for the full set — and fix what they flag. For
-build stages, `make pdf` must succeed. Report validator output honestly; do not
-describe a stage as complete while a check is failing.
+The controller runs the stage validators and any required build after your turn.
+Prepare all expected outputs, then stop without invoking validator scripts or
+Makefile targets. If the controller reports failures in a later remediation
+turn, fix those failures and return control for another verified check.

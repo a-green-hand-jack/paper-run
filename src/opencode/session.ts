@@ -131,18 +131,30 @@ export async function abortAndWaitForIdle(
   directory?: string,
   timeoutMs = 5_000,
 ): Promise<void> {
-  await unwrap(
-    client.session.abort({
-      sessionID: sessionId,
-      ...(directory !== undefined ? { directory } : {}),
-    }),
-    "session abort",
-  );
-
+  const controller = new AbortController();
+  let timedOut = false;
   const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await getSessionStatus(client, sessionId, directory) === "idle") return;
-    await new Promise((resolve) => setTimeout(resolve, 25));
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, timeoutMs);
+  try {
+    await unwrap(
+      client.session.abort({
+        sessionID: sessionId,
+        ...(directory !== undefined ? { directory } : {}),
+      }, { signal: controller.signal }),
+      "session abort",
+    );
+
+    while (Date.now() < deadline) {
+      if (await getSessionStatus(client, sessionId, directory, controller.signal) === "idle") return;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  } catch (err) {
+    if (!timedOut) throw err;
+  } finally {
+    clearTimeout(timer);
   }
   throw new OpencodeError(`session ${sessionId} did not become idle after abort`);
 }
@@ -158,9 +170,13 @@ export async function getSessionStatus(
   client: OpencodeClient,
   sessionId: string,
   directory?: string,
+  signal?: AbortSignal,
 ): Promise<SessionStatusType> {
   const statuses = await unwrap(
-    client.session.status(directory !== undefined ? { directory } : {}),
+    client.session.status(
+      directory !== undefined ? { directory } : {},
+      signal ? { signal } : undefined,
+    ),
     "session status",
   );
 

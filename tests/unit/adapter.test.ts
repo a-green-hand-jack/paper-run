@@ -342,20 +342,23 @@ describe("isAdapterInstalled", () => {
     expect(parsedConfig.permission.webfetch).toBe("ask");
     const permissions = parsedConfig.permission.bash;
     expect(permissions["*"]).toBe("ask");
-    expect(permissions["python3 .agents/tools/check-*.py"]).toBe("allow");
-    expect(permissions["bash .agents/tools/verify.sh"]).toBe("allow");
-    expect(permissions["make pdf"]).toBe("allow");
+    expect(permissions["python3 .agents/tools/check-*.py"]).toBeUndefined();
+    expect(permissions["bash .agents/tools/verify.sh"]).toBeUndefined();
+    expect(permissions["make pdf"]).toBeUndefined();
     expect(permissions["git rev-parse --show-toplevel"]).toBe("allow");
     expect(permissions["git status --short"]).toBe("allow");
-    expect(permissions["git diff --stat"]).toBe("allow");
-    expect(permissions["git diff --cached --stat"]).toBe("allow");
-    expect(permissions["git diff -- *"]).toBe("allow");
+    expect(permissions["git status --short --branch"]).toBe("allow");
     expect(permissions["git remote -v"]).toBe("allow");
     expect(permissions["python3 *"]).toBeUndefined();
     expect(permissions["bash *"]).toBeUndefined();
     expect(permissions["git *"]).toBeUndefined();
     expect(permissions["git add -- *"]).toBeUndefined();
+    expect(permissions["git diff -- *"]).toBeUndefined();
+    expect(permissions["git diff -- **"]).toBeUndefined();
+    expect(permissions["git --no-pager diff --no-ext-diff --no-textconv --stat"]).toBeUndefined();
     expect(permissions["make pdf*"]).toBeUndefined();
+    expect(permissions["python3 -c *"]).toBeUndefined();
+    expect(writer).toContain("Do not construct ad hoc shell or Python one-liners");
   });
 
   it("requires explicit bash approval for /mode without a tool bypass", async () => {
@@ -395,8 +398,6 @@ describe("isAdapterInstalled", () => {
     expect(config.permission.bash).toMatchObject({
       "*": "ask",
       "git status --short": "allow",
-      "bash .agents/tools/verify.sh": "allow",
-      "make pdf": "allow",
     });
   });
 

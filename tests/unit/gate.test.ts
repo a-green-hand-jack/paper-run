@@ -377,7 +377,10 @@ describe("evaluateGate released by /approve", () => {
 
     expect(decision.outcome).toBe("proceed");
     expect(decision.reason).toContain("/approve");
-    expect(client.session.abort).toHaveBeenCalledWith(expect.objectContaining({ sessionID: "ses_1" }));
+    expect(client.session.abort).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionID: "ses_1" }),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   it("stops when run.json flips to blocked", async () => {
