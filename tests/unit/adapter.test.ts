@@ -336,6 +336,8 @@ describe("isAdapterInstalled", () => {
     expect(writerFrontmatter).not.toContain("git add*");
     expect(writerFrontmatter).not.toContain("bash: ask");
     expect(writerFrontmatter).not.toContain("webfetch: allow");
+    expect(writerFrontmatter).toContain("webfetch: deny");
+    expect(writerFrontmatter).toContain("websearch: deny");
     expect(writer).toContain("Do not run\n`git add`, `git commit`, or `git push`");
 
     const parsedConfig = JSON.parse(config);

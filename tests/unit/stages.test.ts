@@ -172,6 +172,21 @@ describe("stage definitions", () => {
     );
   });
 
+  it("routes claim-evidence bindings away from locked PAPER.md sections", () => {
+    expect(STAGES.claim_evidence.validators).toContainEqual(
+      expect.objectContaining({
+        type: "contract_section",
+        contract: "EXPERIMENTS.md",
+        heading: "## Claim-evidence bindings",
+        required: true,
+      }),
+    );
+
+    const outputs = STAGES.claim_evidence.expectedOutputs.join("\n");
+    expect(outputs).toContain("EXPERIMENTS.md ## Claim-evidence bindings");
+    expect(outputs).toContain("Do not edit the locked PAPER.md");
+  });
+
   it("validates publication artifacts and checks references during self-review", () => {
     expect(STAGES.publication_build.validators).toContainEqual(
       expect.objectContaining({ type: "publication_build", required: true }),
@@ -301,6 +316,12 @@ describe("renderStagePrompt", () => {
     }
   });
 
+  it("tells claim-evidence work not to modify locked contribution prose", () => {
+    const prompt = renderStagePrompt(STAGES.claim_evidence, baseCtx);
+    expect(prompt).toContain("EXPERIMENTS.md ## Claim-evidence bindings");
+    expect(prompt).toContain("Do not edit the locked PAPER.md ### Central thesis or ### Contributions");
+  });
+
   it("summarizes prior stages", () => {
     const history: StageRecord[] = [
       {
@@ -392,6 +413,17 @@ describe("renderRemediationPrompt", () => {
       validationFailures: ["something failed"],
     });
     expect(prompt).toContain("instead of writing something that would make the check");
+  });
+
+  it("retains claim-evidence routing and lock boundaries during remediation", () => {
+    const prompt = renderRemediationPrompt(STAGES.claim_evidence, {
+      mode: "autonomous",
+      history: [],
+      validationFailures: ["Paper contracts failed structural validation"],
+    });
+
+    expect(prompt).toContain("EXPERIMENTS.md ## Claim-evidence bindings");
+    expect(prompt).toContain("Do not edit the locked PAPER.md ### Central thesis or ### Contributions");
   });
 });
 
@@ -532,6 +564,28 @@ describe("validateStage", () => {
       ],
     };
 
+    expect((await validateStage(stage, tmpDir)).passed).toBe(true);
+  });
+
+  it("requires substantive claim-evidence bindings in EXPERIMENTS.md", async () => {
+    const validator = STAGES.claim_evidence.validators.find(
+      (candidate) =>
+        candidate.type === "contract_section" &&
+        candidate.contract === "EXPERIMENTS.md" &&
+        candidate.heading === "## Claim-evidence bindings",
+    );
+    expect(validator).toBeDefined();
+    const stage = { ...STAGES.claim_evidence, validators: [validator!] };
+
+    expect((await validateStage(stage, tmpDir)).passed).toBe(false);
+
+    writeFileSync(join(tmpDir, "EXPERIMENTS.md"), "## Claim-evidence bindings\n\nTODO\n");
+    expect((await validateStage(stage, tmpDir)).passed).toBe(false);
+
+    writeFileSync(
+      join(tmpDir, "EXPERIMENTS.md"),
+      "## Claim-evidence bindings\n\n- C1 is supported by table_kw.tex; uncertainty is unavailable.\n",
+    );
     expect((await validateStage(stage, tmpDir)).passed).toBe(true);
   });
 

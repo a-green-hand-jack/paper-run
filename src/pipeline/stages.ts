@@ -222,10 +222,20 @@ export const STAGES: Record<StageId, Stage> = {
     harnessSkill: ".agents/skills/citation-support-review/SKILL.md",
     sidecarSkills: [".agents/skills/ccf-integrity-auditor/SKILL.md"],
     expectedOutputs: [
-      "Each contribution in PAPER.md traced to specific evidence in EXPERIMENTS.md",
+      "Each contribution in PAPER.md traced to specific evidence under EXPERIMENTS.md ## Claim-evidence bindings",
+      "Claim-evidence qualification stays in EXPERIMENTS.md; cross-cutting gaps may go under PAPER.md ## Unresolved",
+      "Do not edit the locked PAPER.md ### Central thesis or ### Contributions sections",
       "Claims without support marked unresolved — never softened into sounding supported",
     ],
     validators: [
+      {
+        type: "contract_section",
+        contract: "EXPERIMENTS.md",
+        heading: "## Claim-evidence bindings",
+        required: true,
+        message:
+          "EXPERIMENTS.md ## Claim-evidence bindings is missing or empty — record bindings there without editing locked PAPER.md sections",
+      },
       {
         type: "check_script",
         script: "check-paper-contracts.py",

@@ -121,6 +121,38 @@ describe("locked contract guard", () => {
     expect(checkLockedContracts(tmpDir, baseline).passed).toBe(true);
   });
 
+  it("blocks appended qualification prose inside locked contributions", async () => {
+    commitContracts("- The contributions.");
+    const baseline = await captureLockedContractBaseline(tmpDir);
+    const path = join(tmpDir, "PAPER.md");
+    writeFileSync(
+      path,
+      readFileSync(path, "utf-8").replace(
+        "- A deterministic guard.",
+        "- A deterministic guard.\n\nEvidence qualification is recorded elsewhere.",
+      ),
+    );
+
+    expect(checkLockedContracts(tmpDir, baseline).violations).toEqual([
+      expect.objectContaining({ selector: "contributions" }),
+    ]);
+  });
+
+  it("allows evidence gaps to be appended under PAPER.md Unresolved", async () => {
+    commitContracts("- The contributions.");
+    const baseline = await captureLockedContractBaseline(tmpDir);
+    const path = join(tmpDir, "PAPER.md");
+    writeFileSync(
+      path,
+      readFileSync(path, "utf-8").replace(
+        "## Story and structure",
+        "## Unresolved\n\n- Missing run provenance.\n\n## Story and structure",
+      ),
+    );
+
+    expect(checkLockedContracts(tmpDir, baseline).passed).toBe(true);
+  });
+
   it("allows unrelated PAPER.md changes when locked prose has no structural selector", async () => {
     commitContracts("- Preserve the primary fairness condition.");
     const baseline = await captureLockedContractBaseline(tmpDir);

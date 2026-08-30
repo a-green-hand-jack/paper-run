@@ -6,6 +6,10 @@ An OpenCode-native paper writing harness for autonomous and collaborative end-to
 
 `paper-run` is a globally-installed CLI that orchestrates end-to-end paper writing by driving [OpenCode](https://opencode.ai) as the agent runtime. It works with the [agent-writing-harness](https://github.com/a-green-hand-jack/agent-writing-harness) template to provide a complete paper production pipeline.
 
+Version `v0.1.0` has completed a clean 13/13 autonomous headless acceptance run on
+PaperWrite-Bench `pwb-0002`; see [issue #21](https://github.com/a-green-hand-jack/paper-run/issues/21)
+for the run configuration, checkpoints, timing, and publication artifacts.
+
 ## Installation
 
 ```bash
@@ -44,7 +48,8 @@ paper-run init ~/papers/my-paper --brief ~/briefs/my-paper.md \
 ```bash
 paper-run init [directory]    # Create a new writing repo from the harness template
 paper-run [start]             # Launch OpenCode TUI and start the pipeline
-paper-run start --variant high # Forward a provider reasoning variant
+paper-run start --headless --mode autonomous \
+  --model openai/gpt-5.6-sol --variant high
 paper-run status              # Print current pipeline status
 paper-run mode [mode]         # Show or switch operating mode
 paper-run resume              # Resume from the last checkpoint
@@ -77,6 +82,10 @@ normal stage approval never authorizes a locked-contract change.
 
 Headless runs fail immediately when an unlisted permission requires human approval instead of
 waiting invisibly. Run without `--headless` to review such a request, or add a narrow project rule.
+The installed primary writer explicitly denies web fetch/search and edits to protected controller,
+harness, and Makefile surfaces. Shell execution remains approval-gated, and headless mode fails
+instead of auto-approving a request. Validation and publication builds remain controller-owned; the
+writer must use supplied local materials or record an unresolved gap rather than seek broader permissions.
 
 ## Modes
 
@@ -93,6 +102,21 @@ paper-run mode autonomous
 # /mode collaborative
 ```
 
+## Pipeline
+
+Every run follows the same validated 13-stage sequence:
+
+```text
+bootstrap -> material assessment -> evidence inventory -> paper positioning
+-> claim-evidence organization -> story and outline -> canonical drafting
+-> citation, figure and table integration -> self review -> independent review
+-> revision -> publication variant build -> paper candidate
+```
+
+Claim-evidence qualification belongs in `EXPERIMENTS.md ## Claim-evidence bindings`;
+locked thesis and contribution sections remain fail-closed. The final candidate is a reviewable
+artifact, not an assertion that a Human has approved submission or an external release.
+
 ## Architecture
 
 ```
@@ -100,8 +124,9 @@ paper-run (global)              agent-writing-harness (in repo)
 ├── CLI + controller            ├── Paper contracts (PAPER.md, ...)
 ├── Stage sequencing            ├── Writing skills (.agents/skills/)
 ├── Gate policy                 ├── Validators (check-*.py)
-├── Git checkpoints             ├── LaTeX build (Makefile)
-└── OpenCode integration        └── Release machinery
+├── Git checkpoints             ├── Publication build profiles
+├── Safe publication builds     └── Release machinery
+└── OpenCode integration
 ```
 
 ## Development
@@ -112,7 +137,10 @@ cd paper-run
 npm install
 npm run build
 npm run test
+npm run typecheck
 ```
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ## License
 

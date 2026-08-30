@@ -8,6 +8,8 @@ permission:
   glob: allow
   grep: allow
   list: allow
+  webfetch: deny
+  websearch: deny
   edit:
     "*": allow
     ".git/**": deny
