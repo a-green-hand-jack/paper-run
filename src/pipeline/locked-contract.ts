@@ -33,6 +33,11 @@ export interface LockedContractResult {
   violations: LockedContractViolation[];
 }
 
+export interface LockedContractAuthorization {
+  baseCommit: string;
+  candidateDigest: string;
+}
+
 const FIELD_SELECTORS: ReadonlyArray<[string, LockedPaperSelector]> = [
   ["Working title", "working_title"],
   ["Target venue", "target_venue"],
@@ -88,8 +93,25 @@ export function formatLockedContractFailure(result: LockedContractResult): strin
   return (
     `locked-contract violation against base ${result.baseCommit}: ${detail}. ` +
     `Candidate digest: ${result.candidateDigest}. ` +
-    "The run is stopped; ordinary stage approval cannot authorize this change because it is not bound to both values."
+    "The run is stopped; ordinary stage approval cannot authorize this change. " +
+    "After reviewing and explicitly staging the intended contract changes, authorize only this candidate with: " +
+    `paper-run checkpoint --authorize-locked-change ${result.baseCommit}:${result.candidateDigest}`
   );
+}
+
+export function parseLockedContractAuthorization(value: string): LockedContractAuthorization {
+  const match = /^([0-9a-f]{40}):([0-9a-f]{64})$/.exec(value);
+  if (!match) {
+    throw new Error("locked-change authorization must be <40-char-base-commit>:<64-char-candidate-digest>");
+  }
+  return { baseCommit: match[1]!, candidateDigest: match[2]! };
+}
+
+export function authorizesLockedContract(
+  result: LockedContractResult,
+  authorization: LockedContractAuthorization,
+): boolean {
+  return result.baseCommit === authorization.baseCommit && result.candidateDigest === authorization.candidateDigest;
 }
 
 function comparePaper(before: string, after: string): LockedContractViolation[] {
@@ -124,15 +146,6 @@ function comparePaper(before: string, after: string): LockedContractViolation[] 
     }
   }
 
-  if (baseline.unknownLockedItems.length > 0 && baseline.remainder !== candidate.remainder) {
-    violations.push({
-      file: "PAPER.md",
-      message:
-        `PAPER.md contains an unclassifiable change while these locked commitments cannot be mapped safely: ` +
-        baseline.unknownLockedItems.join(" | "),
-    });
-  }
-
   return violations;
 }
 
@@ -157,69 +170,44 @@ function checkContractContents(
 interface ParsedPaper {
   lockedSection: string;
   lockedSelectors: Set<LockedPaperSelector>;
-  unknownLockedItems: string[];
   values: Map<LockedPaperSelector, string>;
-  remainder: string;
 }
 
 function parsePaper(markdown: string): ParsedPaper {
   assertUnambiguousPaper(markdown);
   const sections = splitSections(markdown);
   const values = new Map<LockedPaperSelector, string>();
-  const classifiedRanges: Array<[number, number, string]> = [];
 
   const identity = sections.get("paper identity");
   if (identity) {
     for (const [label, selector] of FIELD_SELECTORS) {
       const match = new RegExp(`^\\s*-?\\s*${escapeRegex(label)}\\s*:\\s*(.*)$`, "im").exec(identity.text);
       values.set(selector, match?.[1]?.trim() ?? "");
-      if (match?.index !== undefined) {
-        classifiedRanges.push([
-          identity.start + match.index,
-          identity.start + match.index + match[0].length,
-          selector,
-        ]);
-      }
     }
   }
 
-  const operatingMode = sections.get("operating mode");
-  if (operatingMode) {
-    const match = /^\s*(?:[-*]\s+)?Mode\s*:\s*.*$/im.exec(operatingMode.text);
-    if (match?.index !== undefined) {
-      classifiedRanges.push([operatingMode.start + match.index, operatingMode.start + match.index + match[0].length, "mode"]);
-    }
-  }
-
-  addSectionSelector(sections, "what readers should believe", "central thesis", "central_thesis", values, classifiedRanges);
-  addSectionSelector(sections, "what readers should believe", "contributions", "contributions", values, classifiedRanges);
+  addSectionSelector(sections, "what readers should believe", "central thesis", "central_thesis", values);
+  addSectionSelector(sections, "what readers should believe", "contributions", "contributions", values);
 
   const authors = sections.get("authors and identity");
   values.set("authors_identity", authors?.text.trim() ?? "");
-  if (authors) classifiedRanges.push([authors.start, authors.end, "authors_identity"]);
 
   const locked = sections.get("what must not change silently");
   const lockedSection = locked?.text.trim() ?? "";
   const lockedItems = extractLockedItems(lockedSection);
   const lockedSelectors = new Set<LockedPaperSelector>();
-  const unknownLockedItems: string[] = [];
 
   for (const item of lockedItems) {
     const mapped = mapLockedItem(item);
-    if (mapped.length === 0) unknownLockedItems.push(item);
-    else mapped.forEach((selector) => lockedSelectors.add(selector));
+    mapped.forEach((selector) => lockedSelectors.add(selector));
   }
 
   addHeadingLockedSelectors(markdown, lockedSelectors);
 
-  if (locked) classifiedRanges.push([locked.start, locked.end, "locked_items"]);
-
   return {
     lockedSection,
     lockedSelectors,
-    unknownLockedItems,
     values,
-    remainder: maskRanges(markdown, classifiedRanges),
   };
 }
 
@@ -289,7 +277,6 @@ function addSectionSelector(
   headingName: string,
   selector: LockedPaperSelector,
   values: Map<LockedPaperSelector, string>,
-  ranges: Array<[number, number, string]>,
 ): void {
   const parent = sections.get(parentName);
   if (!parent) {
@@ -308,7 +295,6 @@ function addSectionSelector(
   const localStart = match.index!;
   const localEnd = headings[index + 1]?.index ?? parent.text.length;
   values.set(selector, parent.text.slice(localStart, localEnd).trim());
-  ranges.push([parent.start + localStart, parent.start + localEnd, selector]);
 }
 
 function normalizeHeading(heading: string): string {
@@ -332,17 +318,8 @@ function mapLockedItem(item: string): LockedPaperSelector[] {
   if (/\btarget venue\b/.test(normalized)) selectors.push("target_venue");
   if (/\bpaper type\b/.test(normalized)) selectors.push("paper_type");
   if (/\bintended readers?\b|\btarget audience\b/.test(normalized)) selectors.push("intended_readers");
-  if (/\bauthor list\b|\bauthors? and identity\b|\bauthor identity\b/.test(normalized)) selectors.push("authors_identity");
+  if (/\bauthor list\b|\bauthors? and identity\b|\bauthor identity\b|\bauthorship\b/.test(normalized)) selectors.push("authors_identity");
   return selectors;
-}
-
-function maskRanges(markdown: string, ranges: Array<[number, number, string]>): string {
-  return ranges
-    .sort((left, right) => right[0] - left[0])
-    .reduce(
-      (text, [start, end, selector]) => `${text.slice(0, start)}\n<${selector}>\n${text.slice(end)}`,
-      markdown,
-    );
 }
 
 async function readFromCommit(cwd: string, commit: string, path: string): Promise<string> {

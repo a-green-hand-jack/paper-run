@@ -192,6 +192,7 @@ Paper-Run-Timestamp: 2026-08-28T10:00:00.000Z`;
     ["duplicate key", `Subject\n\nPaper-Run-Stage: bootstrap\nPaper-Run-Stage: bootstrap\nPaper-Run-Status: completed\nPaper-Run-Run: abcd1234\nPaper-Run-Mode: autonomous\nPaper-Run-Template: v0.3.0\nPaper-Run-Kind: automatic\nPaper-Run-Timestamp: 2026-08-28T10:00:00.000Z`],
     ["body impersonation", `Ordinary commit\n\nPaper-Run-Stage: bootstrap\nPaper-Run-Status: completed\nPaper-Run-Run: abcd1234\nPaper-Run-Mode: autonomous\nPaper-Run-Template: v0.3.0\nPaper-Run-Kind: automatic\nPaper-Run-Timestamp: 2026-08-28T10:00:00.000Z`],
     ["control injection", `Subject\n\nPaper-Run-Stage: bootstrap\rmalicious\nPaper-Run-Status: completed\nPaper-Run-Run: abcd1234\nPaper-Run-Mode: autonomous\nPaper-Run-Template: v0.3.0\nPaper-Run-Kind: automatic\nPaper-Run-Timestamp: 2026-08-28T10:00:00.000Z`],
+    ["authorization on automatic checkpoint", `Stage: bootstrap — completed\n\nPaper-Run-Stage: bootstrap\nPaper-Run-Status: completed\nPaper-Run-Run: abcd1234\nPaper-Run-Mode: autonomous\nPaper-Run-Template: v0.3.0\nPaper-Run-Locked-Authorization: ${"a".repeat(40)}:${"b".repeat(64)}\nPaper-Run-Kind: automatic\nPaper-Run-Timestamp: 2026-08-28T10:00:00.000Z`],
   ])("rejects %s trailers", (_name, message) => {
     expect(() => parseTrailers(message)).toThrow(/Invalid Paper-Run checkpoint trailers/);
   });

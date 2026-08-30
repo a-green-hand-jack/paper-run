@@ -9,7 +9,31 @@
     "grep": "allow",
     "list": "allow",
     "edit": "allow",
-    "webfetch": "allow",
-    "bash": "ask"
+    "webfetch": "ask",
+    "bash": {
+      "*": "ask",
+      "pwd": "allow",
+      "uname -s": "allow",
+      "uname -m": "allow",
+      "hostname": "allow",
+      "git rev-parse --show-toplevel": "allow",
+      "git branch --show-current": "allow",
+      "git status --short": "allow",
+      "git status --porcelain": "allow",
+      "git diff --stat": "allow",
+      "git diff --cached --stat": "allow",
+      "git diff -- *": "allow",
+      "git diff --cached -- *": "allow",
+      "git remote -v": "allow",
+      "git diff --check": "allow",
+      "git diff --cached --check": "allow",
+      "python3 .agents/tools/paper-init.py status": "allow",
+      "python3 .agents/tools/check-*.py": "allow",
+      "python3 -m json.tool .paper-run/assessment.json": "allow",
+      "bash .agents/tools/verify.sh": "allow",
+      "make pdf": "allow",
+      "pdfinfo paper/main.pdf": "allow",
+      "pdftotext paper/main.pdf -": "allow"
+    }
   }
 }

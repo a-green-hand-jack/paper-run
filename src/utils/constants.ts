@@ -76,6 +76,7 @@ export const TRAILER_KEYS = [
   "Paper-Run-Session",
   "Paper-Run-Template",
   "Paper-Run-Material-Hash",
+  "Paper-Run-Locked-Authorization",
   "Paper-Run-Kind",
   "Paper-Run-Timestamp",
 ] as const;

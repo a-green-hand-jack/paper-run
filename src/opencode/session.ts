@@ -80,6 +80,7 @@ export async function sendPrompt(
     text: string;
     agent?: string;
     model?: string;
+    variant?: string;
     directory?: string;
   },
 ): Promise<void> {
@@ -90,6 +91,7 @@ export async function sendPrompt(
       ...(opts.directory !== undefined ? { directory: opts.directory } : {}),
       ...(opts.agent !== undefined ? { agent: opts.agent } : {}),
       ...(model !== undefined ? { model } : {}),
+      ...(opts.variant !== undefined ? { variant: opts.variant } : {}),
       parts: [{ type: "text", text: opts.text }],
     }),
     "session prompt",

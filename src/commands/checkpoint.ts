@@ -13,7 +13,12 @@ import { PaperRunError } from "../utils/errors.js";
 import { requireProjectRoot } from "../utils/paths.js";
 import { getStage, stageNumber } from "../pipeline/stages.js";
 import { log } from "../utils/logger.js";
-import { checkStagedLockedContracts, formatLockedContractFailure } from "../pipeline/locked-contract.js";
+import {
+  authorizesLockedContract,
+  checkStagedLockedContracts,
+  formatLockedContractFailure,
+  parseLockedContractAuthorization,
+} from "../pipeline/locked-contract.js";
 
 const GENERATED_RESUME_CHANGES = new Set([
   `${PAPER_RUN_DIR}/${STATE_FILES.run}`,
@@ -95,7 +100,11 @@ async function isGatePolicyModeOnlyChange(
   }
 }
 
-export async function checkpointCommand(): Promise<void> {
+export interface CheckpointOptions {
+  authorizeLockedChange?: string;
+}
+
+export async function checkpointCommand(opts: CheckpointOptions = {}): Promise<void> {
   const projectDir = requireProjectRoot();
   const state = readRunState(projectDir);
   const branch = await getCurrentBranch(projectDir);
@@ -114,9 +123,27 @@ export async function checkpointCommand(): Promise<void> {
   }
 
   const locked = await checkStagedLockedContracts(projectDir);
-  if (!locked.passed) {
+  let lockedAuthorization: string | undefined;
+  if (opts.authorizeLockedChange !== undefined) {
+    let authorization;
+    try {
+      authorization = parseLockedContractAuthorization(opts.authorizeLockedChange);
+    } catch (err) {
+      throw new PaperRunError(err instanceof Error ? err.message : String(err));
+    }
+    if (locked.passed) {
+      throw new PaperRunError("Locked-change authorization was supplied, but the staged contracts contain no locked change.");
+    }
+    if (!authorizesLockedContract(locked, authorization)) {
+      throw new PaperRunError(
+        "Locked-change authorization does not match the current HEAD and staged contract candidate.",
+        { hint: formatLockedContractFailure(locked) },
+      );
+    }
+    lockedAuthorization = opts.authorizeLockedChange;
+  } else if (!locked.passed) {
     throw new PaperRunError(`Manual checkpoint refused: ${formatLockedContractFailure(locked)}`, {
-      hint: "Restore the staged BRIEF.md/PAPER.md locked commitments, then checkpoint permitted nonlocked work.",
+      hint: "Restore the staged locked commitments, or review the exact bound authorization command above.",
     });
   }
 
@@ -130,7 +157,9 @@ export async function checkpointCommand(): Promise<void> {
     stageAll: false,
     ...(state.session_id ? { sessionId: state.session_id } : {}),
     ...(state.material_hash ? { materialHash: state.material_hash } : {}),
+    ...(lockedAuthorization ? { lockedAuthorization } : {}),
   }, projectDir);
+  if (lockedAuthorization) log.warn("Checkpoint includes an explicit digest-bound locked-contract authorization.");
   log.success(`Manual checkpoint created (${sha.slice(0, 8)}).`);
 }
 

@@ -140,6 +140,8 @@ describe("renderAssessmentPrompt", () => {
     const prompt = renderAssessmentPrompt({ materialFiles: [], briefPresent: true });
     expect(prompt).toContain(".paper-run/assessment.json");
     expect(prompt).toContain("paper-run-assessment-v1");
+    expect(prompt).toContain("owned by paper-run itself");
+    expect(prompt).toContain("do not stop to request another skill");
   });
 });
 

@@ -44,6 +44,7 @@ paper-run init ~/papers/my-paper --brief ~/briefs/my-paper.md \
 ```bash
 paper-run init [directory]    # Create a new writing repo from the harness template
 paper-run [start]             # Launch OpenCode TUI and start the pipeline
+paper-run start --variant high # Forward a provider reasoning variant
 paper-run status              # Print current pipeline status
 paper-run mode [mode]         # Show or switch operating mode
 paper-run resume              # Resume from the last checkpoint
@@ -61,6 +62,21 @@ Use `paper-run resume` after an interruption. It resumes the recorded run from i
 checkpoint and reuses the recorded OpenCode session when available. Completed stages are not
 repeated; a stage interrupted before its checkpoint is retried. `paper-run start` remains the
 normal way to start or continue a run.
+
+Natural-language locked commitments keep their declaration protected without freezing unrelated
+`PAPER.md` fields. Structurally mapped locked fields and `BRIEF.md` still fail closed. When a Human
+intentionally changes one, the error prints an exact base commit and candidate digest. Review and
+stage that candidate, then use the printed command:
+
+```bash
+paper-run checkpoint --authorize-locked-change <base-commit>:<candidate-digest>
+```
+
+The authorization must match both values and is recorded in the manual checkpoint trailers. A
+normal stage approval never authorizes a locked-contract change.
+
+Headless runs fail immediately when an unlisted permission requires human approval instead of
+waiting invisibly. Run without `--headless` to review such a request, or add a narrow project rule.
 
 ## Modes
 

@@ -328,14 +328,34 @@ describe("isAdapterInstalled", () => {
     const writerFrontmatter = writer.split("---")[1] ?? "";
 
     expect(writer).toContain(
-      'edit:\n    "*": allow\n    ".agents/**": deny\n    ".paper-run/**": deny\n    ".paper-run/assessment.json": allow',
+      'edit:\n    "*": allow\n    ".git/**": deny\n    ".agents/**": deny\n    ".opencode/**": deny\n    ".paper-run/**": deny\n    ".paper-run/assessment.json": allow\n    "AGENTS.md": deny\n    "Makefile": deny\n    "opencode.json": deny',
     );
-    for (const text of [writerFrontmatter, config]) {
-      expect(text).not.toContain("python3 .agents/");
-      expect(text).not.toContain("bash .agents/tools/");
-      expect(text).not.toContain("make *");
-      expect(text).not.toContain("git add*");
-    }
+    expect(writerFrontmatter).not.toContain("python3 .agents/");
+    expect(writerFrontmatter).not.toContain("bash .agents/tools/");
+    expect(writerFrontmatter).not.toContain("make *");
+    expect(writerFrontmatter).not.toContain("git add*");
+    expect(writerFrontmatter).not.toContain("bash: ask");
+    expect(writerFrontmatter).not.toContain("webfetch: allow");
+    expect(writer).toContain("Do not run\n`git add`, `git commit`, or `git push`");
+
+    const parsedConfig = JSON.parse(config);
+    expect(parsedConfig.permission.webfetch).toBe("ask");
+    const permissions = parsedConfig.permission.bash;
+    expect(permissions["*"]).toBe("ask");
+    expect(permissions["python3 .agents/tools/check-*.py"]).toBe("allow");
+    expect(permissions["bash .agents/tools/verify.sh"]).toBe("allow");
+    expect(permissions["make pdf"]).toBe("allow");
+    expect(permissions["git rev-parse --show-toplevel"]).toBe("allow");
+    expect(permissions["git status --short"]).toBe("allow");
+    expect(permissions["git diff --stat"]).toBe("allow");
+    expect(permissions["git diff --cached --stat"]).toBe("allow");
+    expect(permissions["git diff -- *"]).toBe("allow");
+    expect(permissions["git remote -v"]).toBe("allow");
+    expect(permissions["python3 *"]).toBeUndefined();
+    expect(permissions["bash *"]).toBeUndefined();
+    expect(permissions["git *"]).toBeUndefined();
+    expect(permissions["git add -- *"]).toBeUndefined();
+    expect(permissions["make pdf*"]).toBeUndefined();
   });
 
   it("requires explicit bash approval for /mode without a tool bypass", async () => {
@@ -372,7 +392,12 @@ describe("isAdapterInstalled", () => {
     expect(stateTool).toContain("This tool never mutates state");
     expect(stateTool).not.toContain("gate-response");
     expect(stateTool).not.toContain("writeFileSync");
-    expect(config.permission.bash).toBe("ask");
+    expect(config.permission.bash).toMatchObject({
+      "*": "ask",
+      "git status --short": "allow",
+      "bash .agents/tools/verify.sh": "allow",
+      "make pdf": "allow",
+    });
   });
 
   it("ignores the run log as well as the session file", async () => {

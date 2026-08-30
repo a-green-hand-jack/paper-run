@@ -999,4 +999,34 @@ describe("permissions", () => {
 
     expect(client.permission.reply).not.toHaveBeenCalled();
   });
+
+  it("fails fast instead of hanging on a headless permission request", async () => {
+    const client = mockClient({
+      onPrompt: () => satisfyBootstrap(tmpDir),
+      eventsForTurn: () => [
+        {
+          type: "permission.asked",
+          properties: {
+            id: "per_headless",
+            sessionID: "ses_1",
+            permission: "bash",
+            metadata: { command: "git push --force" },
+          },
+        },
+      ],
+    });
+    const policy = generateGatePreset("autonomous");
+    writeGatePolicy(tmpDir, policy);
+    const controller = new PipelineController({
+      client,
+      sessionId: "ses_1",
+      projectDir: tmpDir,
+      policy,
+      unattended: true,
+    });
+
+    await expect(controller.run()).rejects.toThrow(/Headless run requires approval for the bash permission/);
+    expect(readRunState(tmpDir).stage_status).toBe("pending");
+    expect(client.permission.reply).not.toHaveBeenCalled();
+  });
 });

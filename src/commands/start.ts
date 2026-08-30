@@ -54,6 +54,7 @@ export interface StartOptions {
   /** Run the pipeline without attaching a TUI. */
   headless?: boolean;
   model?: string;
+  variant?: string;
 }
 
 export async function startCommand(opts: StartOptions): Promise<void> {
@@ -108,6 +109,8 @@ export async function startCommand(opts: StartOptions): Promise<void> {
     projectDir,
     policy,
     ...(opts.model !== undefined ? { model: opts.model } : {}),
+    ...(opts.variant !== undefined ? { variant: opts.variant } : {}),
+    unattended: opts.headless === true,
     signal: abort.signal,
   });
 

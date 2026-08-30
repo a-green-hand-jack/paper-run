@@ -49,6 +49,7 @@ program
   .option("--session <id>", "attach to an existing OpenCode session")
   .option("--headless", "run the pipeline without attaching a TUI")
   .option("--model <model>", "model for the TUI session")
+  .option("--variant <variant>", "reasoning variant for stage prompts")
   .action(async (opts) => {
     await startCommand(opts);
   });
@@ -82,7 +83,13 @@ program
 program
   .command("checkpoint")
   .description("Commit an explicit manual checkpoint from already staged changes")
-  .action(checkpointCommand);
+  .option(
+    "--authorize-locked-change <base:digest>",
+    "authorize this exact staged locked-contract candidate against its HEAD base",
+  )
+  .action(async (opts) => {
+    await checkpointCommand(opts);
+  });
 
 // --- approve ---
 program

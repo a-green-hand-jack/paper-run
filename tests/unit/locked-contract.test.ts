@@ -6,9 +6,11 @@ import { join } from "node:path";
 import { execaSync } from "execa";
 
 import {
+  authorizesLockedContract,
   captureLockedContractBaseline,
   checkLockedContracts,
   formatLockedContractFailure,
+  parseLockedContractAuthorization,
 } from "../../src/pipeline/locked-contract.js";
 
 let tmpDir: string;
@@ -95,6 +97,7 @@ describe("locked contract guard", () => {
     ["paper type", "Full paper", "Short paper"],
     ["intended readers", "Pipeline authors", "Everyone"],
     ["author list", "Ada Example", "Grace Example"],
+    ["anonymous authorship", "Ada Example", "Grace Example"],
   ])("protects the mapped %s selector", async (lockedItem, before, after) => {
     commitContracts(`- The ${lockedItem}.`);
     const baseline = await captureLockedContractBaseline(tmpDir);
@@ -118,18 +121,31 @@ describe("locked contract guard", () => {
     expect(checkLockedContracts(tmpDir, baseline).passed).toBe(true);
   });
 
-  it("fails closed only for unclassifiable PAPER.md changes when locked prose is unknown", async () => {
+  it("allows unrelated PAPER.md changes when locked prose has no structural selector", async () => {
     commitContracts("- Preserve the primary fairness condition.");
     const baseline = await captureLockedContractBaseline(tmpDir);
     const path = join(tmpDir, "PAPER.md");
 
     writeFileSync(path, readFileSync(path, "utf-8").replace("Problem then solution.", "Solution then problem."));
-    const unsafe = checkLockedContracts(tmpDir, baseline);
-    expect(unsafe.passed).toBe(false);
-    expect(unsafe.violations[0]?.message).toContain("unclassifiable");
-
-    writeFileSync(path, readFileSync(path, "utf-8").replace("Solution then problem.", "Problem then solution.").replace("Guarded Paper", "Known field edit"));
     expect(checkLockedContracts(tmpDir, baseline).passed).toBe(true);
+
+    writeFileSync(path, readFileSync(path, "utf-8").replace("Preserve the primary fairness condition.", "Ignore fairness."));
+    expect(checkLockedContracts(tmpDir, baseline).violations[0]?.message).toContain(
+      "What must not change silently",
+    );
+  });
+
+  it("requires a locked-change authorization to match both the base and candidate", async () => {
+    commitContracts("- The central thesis.");
+    const baseline = await captureLockedContractBaseline(tmpDir);
+    const path = join(tmpDir, "PAPER.md");
+    writeFileSync(path, readFileSync(path, "utf-8").replace("Contracts must be checked from Git.", "Changed thesis."));
+    const result = checkLockedContracts(tmpDir, baseline);
+    const authorization = parseLockedContractAuthorization(`${result.baseCommit}:${result.candidateDigest}`);
+
+    expect(authorizesLockedContract(result, authorization)).toBe(true);
+    expect(authorizesLockedContract(result, { ...authorization, candidateDigest: "0".repeat(64) })).toBe(false);
+    expect(() => parseLockedContractAuthorization("not-bound")).toThrow(/40-char-base-commit/);
   });
 
   it("rejects edits to the locked-items declaration itself", async () => {

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { execaSync } from "execa";
 
 import { checkpointCommand, prepareRunResume } from "../../src/commands/checkpoint.js";
+import { checkStagedLockedContracts } from "../../src/pipeline/locked-contract.js";
 import { switchOperatingMode } from "../../src/state/mode.js";
 import { generateGatePreset } from "../../src/state/gate-presets.js";
 import {
@@ -274,6 +275,35 @@ describe("checkpointCommand", () => {
     execaSync("git", ["add", "PAPER.md"], { cwd: repo });
 
     await expect(checkpointCommand()).rejects.toThrow(/locked selector central_thesis/);
+  });
+
+  it("commits an exact digest-bound locked change with an audit trailer", async () => {
+    const path = join(repo, "PAPER.md");
+    writeFileSync(path, "# Paper\n\n## Operating mode\n\n- Mode: autonomous\n\n## What readers should believe\n\n### Central thesis — locked\n\nOriginal thesis.\n\n## What must not change silently\n\n- None.\n");
+    execaSync("git", ["add", "PAPER.md"], { cwd: repo });
+    execaSync("git", ["commit", "-m", "establish paper contract"], { cwd: repo });
+    writeFileSync(path, readPaper(repo).replace("Original thesis.", "Human-authorized thesis."));
+    execaSync("git", ["add", "PAPER.md"], { cwd: repo });
+    const locked = await checkStagedLockedContracts(repo);
+    const authorization = `${locked.baseCommit}:${locked.candidateDigest}`;
+
+    await checkpointCommand({ authorizeLockedChange: authorization });
+
+    const trailers = await getTrailersFromCommit("HEAD", repo);
+    expect(trailers["Paper-Run-Locked-Authorization"]).toBe(authorization);
+    expect(trailers["Paper-Run-Kind"]).toBe("manual");
+    expect(trailers["Paper-Run-Status"]).toBe("pending");
+  });
+
+  it("rejects a stale locked-change authorization without changing HEAD", async () => {
+    writeFileSync(join(repo, "BRIEF.md"), "Changed immutable brief.\n");
+    execaSync("git", ["add", "BRIEF.md"], { cwd: repo });
+    const before = execaSync("git", ["rev-parse", "HEAD"], { cwd: repo }).stdout.trim();
+
+    await expect(
+      checkpointCommand({ authorizeLockedChange: `${before}:${"0".repeat(64)}` }),
+    ).rejects.toThrow(/does not match/);
+    expect(execaSync("git", ["rev-parse", "HEAD"], { cwd: repo }).stdout.trim()).toBe(before);
   });
 
   it("refuses unstaged and untracked changes without modifying the index or HEAD", async () => {

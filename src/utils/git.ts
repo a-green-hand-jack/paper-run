@@ -54,6 +54,7 @@ export interface CheckpointOpts {
   sessionId?: string;
   templateVersion: string;
   materialHash?: string;
+  lockedAuthorization?: string;
   kind?: "automatic" | "manual";
   /** Automatic stage checkpoints own all stage output; manual ones do not. */
   stageAll?: boolean;
@@ -121,6 +122,7 @@ function buildTrailers(opts: CheckpointOpts): string {
   if (opts.sessionId) pairs.push(["Paper-Run-Session", opts.sessionId]);
   pairs.push(["Paper-Run-Template", opts.templateVersion]);
   if (opts.materialHash) pairs.push(["Paper-Run-Material-Hash", opts.materialHash]);
+  if (opts.lockedAuthorization) pairs.push(["Paper-Run-Locked-Authorization", opts.lockedAuthorization]);
   pairs.push(["Paper-Run-Kind", opts.kind ?? "automatic"]);
   pairs.push(["Paper-Run-Timestamp", new Date().toISOString()]);
 
@@ -196,6 +198,13 @@ export function parseTrailers(commitMessage: string): Trailers {
   if (!StageStatusSchema.safeParse(trailers["Paper-Run-Status"]).success) throw invalidTrailers("has an unknown status");
   if (!(MODES as readonly string[]).includes(trailers["Paper-Run-Mode"]!)) throw invalidTrailers("has an unknown mode");
   if (!(["automatic", "manual"] as const).includes(trailers["Paper-Run-Kind"] as never)) throw invalidTrailers("has an unknown kind");
+  const lockedAuthorization = trailers["Paper-Run-Locked-Authorization"];
+  if (lockedAuthorization && !/^[0-9a-f]{40}:[0-9a-f]{64}$/.test(lockedAuthorization)) {
+    throw invalidTrailers("has an invalid locked-contract authorization");
+  }
+  if (lockedAuthorization && trailers["Paper-Run-Kind"] !== "manual") {
+    throw invalidTrailers("has a locked-contract authorization on a non-manual checkpoint");
+  }
   const timestamp = trailers["Paper-Run-Timestamp"]!;
   const timestampMs = Date.parse(timestamp);
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(timestamp) || Number.isNaN(timestampMs) || new Date(timestampMs).toISOString() !== timestamp) {

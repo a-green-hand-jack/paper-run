@@ -232,6 +232,14 @@ describe("sendPrompt", () => {
     );
   });
 
+  it("forwards the provider reasoning variant", async () => {
+    const client = mockClient();
+    await sendPrompt(client, { sessionId: "ses_1", text: "do the thing", variant: "high" });
+    expect(client.session.promptAsync).toHaveBeenCalledWith(
+      expect.objectContaining({ variant: "high" }),
+    );
+  });
+
   it("rejects a model without a provider", async () => {
     const client = mockClient();
     await expect(

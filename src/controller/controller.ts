@@ -96,6 +96,10 @@ export interface ControllerOptions {
   agent?: string;
   /** Fully-qualified model override for stage prompts. */
   model?: string;
+  /** Provider-specific reasoning variant for stage prompts. */
+  variant?: string;
+  /** No TUI is attached, so an unanswered permission must fail fast. */
+  unattended?: boolean;
   signal?: AbortSignal;
 }
 
@@ -575,6 +579,7 @@ export class PipelineController {
         directory: this.opts.projectDir,
         ...(review ? { agent: "paper-reviewer" } : this.opts.agent ? { agent: this.opts.agent } : {}),
         ...(this.opts.model ? { model: this.opts.model } : {}),
+        ...(this.opts.variant ? { variant: this.opts.variant } : {}),
       });
 
       await waitForIdle(this.opts.client, {
@@ -600,9 +605,16 @@ export class PipelineController {
     if (event.kind !== "permission") return;
 
     const payload = event.raw as PermissionAskedPayload;
-    await handlePermissionRequest(this.opts.client, payload, {
+    const approved = await handlePermissionRequest(this.opts.client, payload, {
       directory: this.opts.projectDir,
     });
+    if (!approved && this.opts.unattended) {
+      updateRunState(this.opts.projectDir, { stage_status: "pending" });
+      throw new PaperRunError(
+        `Headless run requires approval for the ${payload.permission} permission.`,
+        { hint: "Add a narrow project permission rule, or rerun without --headless and approve it in the TUI." },
+      );
+    }
   }
 
   private async gate(
