@@ -33,6 +33,7 @@ import { reviewTreeDigest } from "../utils/review-integrity.js";
 
 const EXCLUDED_SOURCE_ENTRIES = new Set([".git", PAPER_RUN_DIR]);
 const SENSITIVE_SOURCE_NAME = /(^|\/)(\.env(?:\.|$)|\.npmrc$|\.netrc$|.*\.(?:pem|key|p12|pfx|secret|secrets)$|credentials?(?:\.|$)|(?:id_rsa|token|service-account|application_default_credentials)(?:\.|$)|.*(?:token|secret|credential|service[-_]?account).*(?:\.json|\.ya?ml|\.toml)?$)/i;
+const IMPORTABLE_IGNORED_ASSET = /\.(?:tex|bib|pdf|png|jpe?g|eps|svg|sty|cls|bst|csv|tsv)$/i;
 
 export interface ReviewOptions extends StartOptions {
   output?: string;
@@ -254,8 +255,13 @@ function copyPaperSource(sourceDir: string, paperDir: string): string[] {
 function importManifest(sourceDir: string): string[] {
   let files: string[];
   try {
-    files = execFileSync("git", ["-C", sourceDir, "ls-files", "-co", "--exclude-standard", "-z"], { encoding: "utf8" })
-      .split("\0").filter(Boolean).map(toPosix).filter((file) => !EXCLUDED_SOURCE_ENTRIES.has(file.split("/")[0] ?? ""));
+    const visible = execFileSync("git", ["-C", sourceDir, "ls-files", "-co", "--exclude-standard", "-z"], { encoding: "utf8" });
+    const ignoredAssets = execFileSync("git", ["-C", sourceDir, "ls-files", "-oi", "--exclude-standard", "-z"], { encoding: "utf8" });
+    files = [...new Set(
+      [...visible.split("\0").filter(Boolean), ...ignoredAssets.split("\0").filter((file) => IMPORTABLE_IGNORED_ASSET.test(file))]
+        .map(toPosix)
+        .filter((file) => !EXCLUDED_SOURCE_ENTRIES.has(file.split("/")[0] ?? "")),
+    )];
   } catch {
     files = listSourceFiles(sourceDir);
   }
@@ -364,7 +370,9 @@ function replaceModeInContracts(workspace: string, mode: Mode): void {
 function writeExternalBuildProfile(workspace: string, inspection: ReviewSourceInspection): void {
   const command = ["make", "pdf"];
   if (!inspection.buildFiles.some((file) => /makefile/i.test(file))) {
-    writeFileSync(join(workspace, "Makefile"), `pdf:\n\tlatexmk -pdf -interaction=nonstopmode ${inspection.entrypoint}\n`);
+    const buildScript = join(workspace, ".agents", "tools", "build-imported.mjs");
+    writeFileSync(buildScript, `import { spawnSync } from "node:child_process";\nconst result = spawnSync("latexmk", ["-pdf", "-interaction=nonstopmode", ${JSON.stringify(inspection.entrypoint)}], { cwd: "paper", stdio: "inherit" });\nprocess.exit(result.status ?? 1);\n`);
+    writeFileSync(join(workspace, "Makefile"), "pdf:\n\tnode .agents/tools/build-imported.mjs\n");
   }
   writeFileSync(join(workspace, ".agents", "paper-build.json"), `${JSON.stringify({
     schema_version: "paper-build-profile-v1",
