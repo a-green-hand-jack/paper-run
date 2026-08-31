@@ -27,7 +27,24 @@ vi.mock("../../src/harness/harness.js", () => ({
 }));
 
 vi.mock("../../src/adapter/install.js", () => ({ installAdapter: vi.fn(async () => undefined) }));
-vi.mock("../../src/state/gate-presets.js", () => ({ generateGatePreset: vi.fn(() => ({})) }));
+vi.mock("../../src/state/gate-presets.js", () => ({
+  generateGatePreset: vi.fn(() => ({})),
+  PIPELINE_STAGES: [
+    "bootstrap",
+    "material_assessment",
+    "evidence_inventory",
+    "paper_positioning",
+    "claim_evidence",
+    "story_outline",
+    "canonical_drafting",
+    "citation_integration",
+    "self_review",
+    "independent_review",
+    "revision",
+    "publication_build",
+    "paper_candidate",
+  ],
+}));
 vi.mock("../../src/state/store.js", () => ({
   ensurePaperRunDir: vi.fn(),
   writeRunState: vi.fn(),

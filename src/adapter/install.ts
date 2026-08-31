@@ -72,7 +72,12 @@ export interface InstallResult {
 const SESSION_IGNORE_LINE = `${PAPER_RUN_DIR}/${STATE_FILES.session}`;
 
 /** Runtime-only paths a writing repo should never commit. */
-const IGNORE_LINES = [SESSION_IGNORE_LINE, `${PAPER_RUN_DIR}/run.log`, `${PAPER_RUN_DIR}/${STATE_FILES.performance}`];
+const IGNORE_LINES = [
+  SESSION_IGNORE_LINE,
+  `${PAPER_RUN_DIR}/run.log`,
+  `${PAPER_RUN_DIR}/${STATE_FILES.performance}`,
+  `${PAPER_RUN_DIR}/${STATE_FILES.publication}`,
+];
 
 // ---------------------------------------------------------------------------
 // Locating the shipped templates

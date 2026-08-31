@@ -31,6 +31,7 @@ import {
   initializeHarnessTrust,
 } from "../harness/harness.js";
 import { generateGatePreset } from "../state/gate-presets.js";
+import { createRunPlan } from "../state/plans.js";
 import {
   ensurePaperRunDir,
   writeRunState,
@@ -186,9 +187,21 @@ export async function initCommand(directory: string, opts: InitOptions): Promise
       template_version: getTemplateVersion(target) ?? version,
     };
 
-    writeRunState(target, state);
+    const plan = createRunPlan();
+    writeRunState(target, { ...state, plan });
     writeGatePolicy(target, generateGatePreset(mode));
-    writeStageHistory(target, { schema_version: "paper-run-stage-history-v1", stages: [] });
+    const planTime = new Date().toISOString();
+    writeStageHistory(target, {
+      schema_version: "paper-run-stage-history-v1",
+      stages: plan.skipped.map((item) => ({
+        stage_id: item.stage,
+        status: "skipped" as const,
+        started_at: planTime,
+        completed_at: planTime,
+        commit_sha: "planned",
+        skip_reason: item.reason,
+      })),
+    });
 
     // --- OpenCode adapter ---
     log.step("Installing the OpenCode adapter");

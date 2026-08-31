@@ -47,6 +47,7 @@ import {
   type StageHistory,
   type StageRecord,
 } from "../state/schema.js";
+import { planStages } from "../state/plans.js";
 import { resolveStageTimeoutMultiplier } from "../state/timeout.js";
 
 import { remainingStages, stageNumber, TOTAL_STAGES } from "../pipeline/stages.js";
@@ -177,10 +178,11 @@ export class PipelineController {
     }
     this.materialVerdict = this.recoverVerdict();
 
+    const plannedStages = state.plan ? planStages(state.plan) : undefined;
     const stages = remainingStages(
       state.current_stage,
       state.stage_status === "completed" || state.stage_status === "approved",
-    );
+    ).filter((stage) => plannedStages?.includes(stage.id) ?? true);
 
     if (stages.length === 0) {
       log.success("Pipeline already complete.");
@@ -217,6 +219,7 @@ export class PipelineController {
 
     return this.finish();
   }
+
 
   // -------------------------------------------------------------------------
   // One stage

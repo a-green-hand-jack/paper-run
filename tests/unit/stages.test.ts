@@ -44,6 +44,7 @@ import {
 import { PIPELINE_STAGES } from "../../src/state/gate-presets.js";
 import type { StageRecord } from "../../src/state/schema.js";
 import { initializeHarnessTrust } from "../../src/harness/harness.js";
+import { readPublication } from "../../src/state/store.js";
 
 /**
  * A harness checkout, for cross-checking that every path we send the agent to
@@ -710,6 +711,7 @@ describe("validateStage", () => {
     process.env["PATH"] = `${writeFakeLatexmk(tmpDir)}:${previousPath ?? ""}`;
     try {
       expect(await buildPublicationArtifacts(tmpDir, { baseline })).toEqual({ passed: true, diagnostic: "" });
+      expect(readPublication(tmpDir)?.variants[0]?.status).toBe("completed");
       expect((await validateStage(publicationOnlyStage(), tmpDir)).passed).toBe(true);
     } finally {
       process.env["PATH"] = previousPath;

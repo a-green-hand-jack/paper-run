@@ -50,6 +50,7 @@ import { PaperRunError, EXIT_CODES } from "../utils/errors.js";
 import { requireProjectRoot } from "../utils/paths.js";
 import { getCurrentBranch } from "../utils/git.js";
 import { log, setLogFile } from "../utils/logger.js";
+import { createRunPlan } from "../state/plans.js";
 
 export interface StartOptions {
   mode?: string;
@@ -61,6 +62,8 @@ export interface StartOptions {
   model?: string;
   variant?: string;
   stageTimeoutMultiplier?: string | number;
+  profile?: string;
+  stages?: string;
 }
 
 export { parseStageTimeoutMultiplier, resolveStageTimeoutMultiplier };
@@ -89,7 +92,24 @@ export async function startCommand(opts: StartOptions): Promise<void> {
     }
   }
 
+  if (state.plan) {
+    if (opts.profile !== undefined || opts.stages !== undefined) {
+      throw new PaperRunError("This run already has a fixed execution plan.", {
+        hint: `Resume it without --profile or --stages (plan: ${state.plan.profile}).`,
+      });
+    }
+  } else {
+    state = updateRunState(projectDir, {
+      plan: createRunPlan(opts.profile, opts.stages),
+    });
+  }
+
   if (opts.stage) {
+    if (!state.plan?.stages.includes(opts.stage)) {
+      throw new PaperRunError(`Stage "${opts.stage}" is not included in the run plan.`, {
+        hint: `Choose one of: ${state.plan?.stages.join(", ") ?? "the configured stages"}.`,
+      });
+    }
     state = jumpToStage(projectDir, opts.stage);
   }
 
@@ -406,6 +426,7 @@ export async function statusCommand(opts: StatusOptions): Promise<void> {
           template_version: state.template_version,
           stage_timeout_multiplier:
             state.stage_timeout_multiplier ?? DEFAULT_STAGE_TIMEOUT_MULTIPLIER,
+          ...(state.plan ? { plan: state.plan } : {}),
           ...(state.error ? { error: state.error } : {}),
         },
         null,
@@ -431,7 +452,12 @@ export async function statusCommand(opts: StatusOptions): Promise<void> {
     ["Template", state.template_version],
     ["Stage timeout", `${state.stage_timeout_multiplier ?? DEFAULT_STAGE_TIMEOUT_MULTIPLIER}x`],
     ["Gate here", policy.gates[state.current_stage]?.policy ?? "await_human"],
+    ...(state.plan ? [["Plan", `${state.plan.profile} (${state.plan.stages.length} stages)`] as [string, string]] : []),
   ]);
+
+  if (state.plan?.skipped.length) {
+    log.info(`Skipped: ${state.plan.skipped.map((item) => item.stage).join(", ")}`);
+  }
 
   if (state.error) {
     log.blank();

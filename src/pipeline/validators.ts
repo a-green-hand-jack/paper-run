@@ -19,6 +19,7 @@ import { execa } from "execa";
 import { runCheck } from "../harness/harness.js";
 import { PAPER_RUN_DIR } from "../utils/constants.js";
 import { log } from "../utils/logger.js";
+import { readPublication, writePublication } from "../state/store.js";
 
 import type { Stage, Validator } from "./stages.js";
 
@@ -325,7 +326,11 @@ function validatePublicationArtifacts(
         if (!Object.prototype.hasOwnProperty.call(baseline, build.output)) {
           return { passed: false, diagnostic: `[${build.name}] output declaration changed during this stage` };
         }
-        if (baseline[build.output] === digestFile(join(root, build.output))) {
+        const publication = readPublication(projectDir);
+        const completedBeforeResume = publication?.variants.some(
+          (variant) => variant.name === build.name && variant.status === "completed",
+        ) ?? false;
+        if (!completedBeforeResume && baseline[build.output] === digestFile(join(root, build.output))) {
           return { passed: false, diagnostic: `[${build.name}] output was not rebuilt during this stage` };
         }
       }
@@ -374,10 +379,36 @@ export async function buildPublicationArtifacts(
   }
 
   const deadline = Date.now() + (options.timeoutMs ?? 10 * 60_000);
+  const existingPublication = readPublication(projectDir);
+  const publication = existingPublication ?? {
+    schema_version: "paper-run-publication-v1" as const,
+    updated_at: new Date().toISOString(),
+    variants: profile.builds.map((build) => ({
+      name: build.name, output: build.output, command: build.command, status: "pending" as const,
+    })),
+  };
+  const byName = new Map(publication.variants.map((variant) => [variant.name, variant]));
   for (const build of profile.builds) {
+    if (!byName.has(build.name)) {
+      publication.variants.push({
+        name: build.name,
+        output: build.output,
+        command: build.command,
+        status: "pending",
+      });
+    }
+  }
+  publication.variants = publication.variants.filter((variant) => profile.builds.some((build) => build.name === variant.name));
+  for (const build of profile.builds) {
+    const known = byName.get(build.name);
+    if (known?.status === "completed" && inspectRegularFile(root, build.output) !== null) continue;
     if (options.signal?.aborted) {
+      updatePublicationVariant(projectDir, publication, build.name, { status: "canceled", error: "build canceled" });
       return { passed: false, diagnostic: `[${build.name}] build canceled` };
     }
+    updatePublicationVariant(projectDir, publication, build.name, {
+      status: "running", started_at: new Date().toISOString(), command: build.command,
+    });
     try {
       const sourceRoot = join(root, profile.sourceRoot);
       const output = join(root, build.output);
@@ -423,6 +454,9 @@ export async function buildPublicationArtifacts(
           shell_escape: "f",
         },
       });
+      updatePublicationVariant(projectDir, publication, build.name, {
+        status: "completed", completed_at: new Date().toISOString(), error: undefined,
+      });
     } catch (err) {
       const failure = err as { timedOut?: boolean; isCanceled?: boolean; code?: string; exitCode?: number };
       const category = failure.timedOut
@@ -434,10 +468,31 @@ export async function buildPublicationArtifacts(
             : typeof failure.exitCode === "number"
               ? `failed with exit code ${failure.exitCode}`
               : "failed";
+      const output = err as { stdout?: string; stderr?: string };
+      updatePublicationVariant(projectDir, publication, build.name, {
+        status: failure.timedOut ? "timed_out" : failure.isCanceled ? "canceled" : "failed",
+        completed_at: new Date().toISOString(),
+        error: category,
+        ...(output.stdout ? { stdout: output.stdout.slice(-8000) } : {}),
+        ...(output.stderr ? { stderr: output.stderr.slice(-8000) } : {}),
+      });
       return { passed: false, diagnostic: `[${build.name}] build ${category}` };
     }
   }
   return { passed: true, diagnostic: "" };
+}
+
+function updatePublicationVariant(
+  projectDir: string,
+  publication: import("../state/schema.js").Publication,
+  name: string,
+  patch: Partial<import("../state/schema.js").Publication["variants"][number]>,
+): void {
+  const variant = publication.variants.find((item) => item.name === name);
+  if (!variant) return;
+  Object.assign(variant, patch);
+  publication.updated_at = new Date().toISOString();
+  writePublication(projectDir, publication);
 }
 
 function assertSourceTreeHasNoSymlinks(directory: string): void {

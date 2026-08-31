@@ -30,6 +30,19 @@ export const MaterialVerdict = z.enum(["usable", "partial", "unusable"]);
 
 export const StageTimeoutMultiplierSchema = z.number().finite().positive().max(100);
 
+export const RunPlanSchema = z.object({
+  profile: z.string().min(1),
+  stages: z.array(z.string().min(1)).min(1),
+  skipped: z.array(
+    z.object({
+      stage: z.string().min(1),
+      reason: z.string().min(1),
+    }),
+  ),
+});
+
+export type RunPlan = z.infer<typeof RunPlanSchema>;
+
 // ---------------------------------------------------------------------------
 // run.json
 // ---------------------------------------------------------------------------
@@ -44,6 +57,7 @@ export const RunStateSchema = z.object({
   started_at: z.string().datetime(),
   updated_at: z.string().datetime(),
   template_version: z.string().min(1),
+  plan: RunPlanSchema.optional(),
   stage_timeout_multiplier: StageTimeoutMultiplierSchema.optional(),
   material_hash: z.string().optional(),
   session_id: z.string().optional(),
@@ -105,6 +119,7 @@ const StageRecordSchema = z.object({
     })
     .optional(),
   material_verdict: MaterialVerdict.optional(),
+  skip_reason: z.string().min(1).optional(),
 });
 
 export type StageRecord = z.infer<typeof StageRecordSchema>;
@@ -155,6 +170,27 @@ export const PerformanceSchema = z.object({
 
 export type Performance = z.infer<typeof PerformanceSchema>;
 export type AttemptPerformance = z.infer<typeof AttemptPerformanceSchema>;
+
+const PublicationVariantStatusSchema = z.enum(["pending", "running", "completed", "failed", "timed_out", "canceled"]);
+const PublicationVariantSchema = z.object({
+  name: z.string().min(1),
+  output: z.string().min(1),
+  command: z.array(z.string()),
+  status: PublicationVariantStatusSchema,
+  started_at: z.string().datetime().optional(),
+  completed_at: z.string().datetime().optional(),
+  error: z.string().optional(),
+  stdout: z.string().optional(),
+  stderr: z.string().optional(),
+});
+
+export const PublicationSchema = z.object({
+  schema_version: z.literal("paper-run-publication-v1"),
+  updated_at: z.string().datetime(),
+  variants: z.array(PublicationVariantSchema),
+});
+
+export type Publication = z.infer<typeof PublicationSchema>;
 
 // ---------------------------------------------------------------------------
 // session.json (gitignored — ephemeral process state)

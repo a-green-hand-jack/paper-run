@@ -32,8 +32,9 @@ import {
   SessionStateSchema,
   AssessmentSchema,
   PerformanceSchema,
+  PublicationSchema,
 } from "./schema.js";
-import type { RunState, GatePolicy, StageHistory, SessionState, Assessment, Performance } from "./schema.js";
+import type { RunState, GatePolicy, StageHistory, SessionState, Assessment, Performance, Publication } from "./schema.js";
 
 const STATE_LOCK_FILE = "state.lock";
 const STATE_LOCK_TIMEOUT_MS = 5_000;
@@ -320,6 +321,17 @@ export function readPerformance(projectDir: string): Performance | null {
 export function writePerformance(projectDir: string, performance: Performance): void {
   PerformanceSchema.parse(performance);
   writeJson(statePath(projectDir, STATE_FILES.performance), performance);
+}
+
+export function readPublication(projectDir: string): Publication | null {
+  const path = statePath(projectDir, STATE_FILES.publication);
+  if (!existsSync(path)) return null;
+  return readJson(path, PublicationSchema, STATE_FILES.publication);
+}
+
+export function writePublication(projectDir: string, publication: Publication): void {
+  PublicationSchema.parse(publication);
+  writeJson(statePath(projectDir, STATE_FILES.publication), publication);
 }
 
 // ---------------------------------------------------------------------------

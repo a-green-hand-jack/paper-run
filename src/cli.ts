@@ -14,6 +14,7 @@ import { initCommand } from "./commands/init.js";
 import { startCommand, statusCommand, modeCommand } from "./commands/start.js";
 import { checkpointCommand } from "./commands/checkpoint.js";
 import { approveCommand } from "./commands/approve.js";
+import { validateCommand, publicationStatusCommand } from "./commands/diagnostics.js";
 
 const program = new Command()
   .name("paper-run")
@@ -45,6 +46,8 @@ program
   .description("Verify the run checkpoint, then launch or resume the paper pipeline")
   .option("--mode <mode>", "override operating mode for this run")
   .option("--stage <stage>", "start from a specific stage")
+  .option("--profile <profile>", "execution plan profile (full|existing-manuscript|review-only|build-only)")
+  .option("--stages <stages>", "comma-separated stages for a custom execution plan")
   .option("--port <port>", "OpenCode server port", parseInt)
   .option("--session <id>", "attach to an existing OpenCode session")
   .option("--headless", "run the pipeline without attaching a TUI")
@@ -65,6 +68,23 @@ program
   .option("--json", "output as JSON")
   .action(async (opts) => {
     await statusCommand(opts);
+  });
+
+program
+  .command("validate")
+  .description("Validate the writing repository and run plan without starting OpenCode")
+  .option("--json", "output as JSON")
+  .action(async (opts) => {
+    await validateCommand(opts);
+  });
+
+program
+  .command("publication")
+  .description("Inspect publication variant build state")
+  .command("status")
+  .option("--json", "output as JSON")
+  .action(async (opts) => {
+    await publicationStatusCommand(opts);
   });
 
 // --- mode ---

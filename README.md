@@ -55,10 +55,32 @@ paper-run start --headless --mode autonomous \
   --model openai/gpt-5.6-sol --variant high \
   --stage-timeout-multiplier 2
 paper-run status              # Print current pipeline status
+paper-run validate             # Validate the repository and plan without starting OpenCode
+paper-run publication status   # Show publication variant build state
 paper-run mode [mode]         # Show or switch operating mode
 paper-run resume              # Resume from the last checkpoint
 paper-run checkpoint          # Force a checkpoint commit
 ```
+
+Runs can use a validated execution profile or an explicit ordered stage list:
+
+```bash
+paper-run start --profile existing-manuscript
+paper-run start --profile review-only
+paper-run start --profile build-only
+paper-run start --stages bootstrap,material_assessment,self_review,independent_review,revision
+```
+
+Available profiles are `full`, `existing-manuscript`, `review-only`, and `build-only`.
+`bootstrap` is always required, stages must remain in pipeline order, and a run's plan is
+fixed in `.paper-run/run.json` so resume cannot silently change its scope. Omitted stages
+are recorded as `skipped` in `.paper-run/stage-history.json`. Use `--stage` only to retry
+a stage already included in the fixed plan.
+
+For long-running CI or Harbor jobs, preserve the writing repository, its run branch,
+`.paper-run/`, and generated `paper/` artifacts between attempts. Run `paper-run resume`
+after restoring them; completed stages and completed publication variants are reused, while
+failed or timed-out variants are retried.
 
 `--stage-timeout-multiplier` scales every stage's default budget for slower model
 gateways. `PAPER_RUN_STAGE_TIMEOUT_MULTIPLIER` provides the same setting for container

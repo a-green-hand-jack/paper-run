@@ -2,6 +2,14 @@
 
 All notable changes to `paper-run` are documented here.
 
+## Unreleased
+
+### Added
+
+- Validated execution profiles and custom ordered stage plans, with fixed plans persisted in `run.json` and omitted stages recorded in stage history.
+- `paper-run validate` and `paper-run publication status` diagnostics for preflight checks and resumable publication builds.
+- Per-variant publication build state in `.paper-run/publication.json`; completed variants are reused after resume and failed or timed-out variants are retried.
+
 ## v0.3.0 - 2026-08-31
 
 ### Added
