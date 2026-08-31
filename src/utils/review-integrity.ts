@@ -27,10 +27,17 @@ export function assertReviewTreeUnchanged(projectDir: string, expected: string):
 
 function listFiles(root: string, current = root): string[] {
   if (!existsSync(root)) throw new PaperRunError("Standalone review paper directory is missing.");
+  const rootStat = lstatSync(root);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    throw new PaperRunError("Standalone review paper directory must be a real directory.");
+  }
   const result: string[] = [];
   for (const entry of readdirSync(current).sort()) {
     const path = join(current, entry);
     const stat = lstatSync(path);
+    if (stat.isSymbolicLink() || (!stat.isDirectory() && !stat.isFile())) {
+      throw new PaperRunError(`Standalone review paper tree contains an unsafe entry: ${relative(root, path)}`);
+    }
     if (stat.isDirectory()) result.push(...listFiles(root, path));
     else result.push(relative(root, path).split("\\").join("/"));
   }

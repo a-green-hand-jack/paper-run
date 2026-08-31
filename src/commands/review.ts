@@ -3,6 +3,7 @@ import {
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   renameSync,
   readFileSync,
   readdirSync,
@@ -12,7 +13,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { execa } from "execa";
 
 import { installAdapter } from "../adapter/install.js";
@@ -31,7 +32,7 @@ import { log, printKeyValues } from "../utils/logger.js";
 import { reviewTreeDigest } from "../utils/review-integrity.js";
 
 const EXCLUDED_SOURCE_ENTRIES = new Set([".git", PAPER_RUN_DIR]);
-const SENSITIVE_SOURCE_NAME = /(^|\/)(\.env(?:\.|$)|.*\.(?:pem|key|p12|pfx|secret|secrets)$|credentials?(?:\.|$)|id_rsa(?:\.|$))/i;
+const SENSITIVE_SOURCE_NAME = /(^|\/)(\.env(?:\.|$)|\.npmrc$|\.netrc$|.*\.(?:pem|key|p12|pfx|secret|secrets)$|credentials?(?:\.|$)|(?:id_rsa|token|service-account|application_default_credentials)(?:\.|$)|.*(?:token|secret|credential|service[-_]?account).*(?:\.json|\.ya?ml|\.toml)?$)/i;
 
 export interface ReviewOptions extends StartOptions {
   output?: string;
@@ -107,7 +108,7 @@ export async function prepareImportedWorkspace(
   const mode = parseMode(opts.mode ?? "collaborative");
   const version = opts.template ?? DEFAULT_TEMPLATE_VERSION;
   const entrypoint = detectEntrypoint(sourceDir, opts.entry);
-  const staging = `${workspace}.paper-run-staging-${process.pid}`;
+  const staging = mkdtempSync(join(realpathSync(nearestExistingParent(workspace)), ".paper-run-import-"));
 
   try {
     log.step(`Preparing an isolated review workspace at ${workspace}`);
@@ -140,6 +141,7 @@ export async function prepareImportedWorkspace(
       purpose === "review" ? "review-report" : "existing-manuscript",
     );
     if (existsSync(workspace)) throw new PaperRunError(`Review workspace was created during preparation: ${workspace}`);
+    mkdirSync(dirname(workspace), { recursive: true });
     renameSync(staging, workspace);
     return { workspace, entrypoint: relativeEntry, files: files.sort() };
   } catch (error) {
@@ -253,7 +255,7 @@ function importManifest(sourceDir: string): string[] {
   let files: string[];
   try {
     files = execFileSync("git", ["-C", sourceDir, "ls-files", "-co", "--exclude-standard", "-z"], { encoding: "utf8" })
-      .split("\0").filter(Boolean).map(toPosix);
+      .split("\0").filter(Boolean).map(toPosix).filter((file) => !EXCLUDED_SOURCE_ENTRIES.has(file.split("/")[0] ?? ""));
   } catch {
     files = listSourceFiles(sourceDir);
   }

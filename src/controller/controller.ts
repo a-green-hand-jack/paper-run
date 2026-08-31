@@ -972,12 +972,28 @@ export class PipelineController {
     const state = readRunState(this.opts.projectDir);
     const manifestPath = `${this.opts.projectDir}/${PAPER_RUN_DIR}/review-source.json`;
 
-    if (state.plan?.profile === "review-report" && existsSync(manifestPath)) {
-      const manifest = JSON.parse(readFileSync(manifestPath, "utf-8")) as { paperDigest?: unknown };
-      if (typeof manifest.paperDigest !== "string") {
-        throw new PaperRunError("Standalone review source manifest has no paper digest.");
+    if (state.plan?.profile === "review-report") {
+      try {
+        const { stdout: headManifest } = await execa(
+          "git",
+          ["show", `HEAD:${PAPER_RUN_DIR}/review-source.json`],
+          { cwd: this.opts.projectDir },
+        );
+        if (!existsSync(manifestPath)) {
+          throw new PaperRunError("Standalone review source manifest is missing.");
+        }
+        if (readFileSync(manifestPath, "utf-8") !== headManifest) {
+          throw new PaperRunError("Standalone review source manifest changed; review metadata is immutable.");
+        }
+        const manifest = JSON.parse(headManifest) as { paperDigest?: unknown };
+        if (typeof manifest.paperDigest !== "string") {
+          throw new PaperRunError("Standalone review source manifest has no paper digest.");
+        }
+        assertReviewTreeUnchanged(this.opts.projectDir, manifest.paperDigest);
+      } catch (error) {
+        if (error instanceof PaperRunError) throw error;
+        // Existing report-only projects have no imported-source manifest.
       }
-      assertReviewTreeUnchanged(this.opts.projectDir, manifest.paperDigest);
     }
 
     return commitCheckpoint(

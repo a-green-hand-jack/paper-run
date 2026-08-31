@@ -68,4 +68,24 @@ describe("external review source inspection", () => {
     expect(metadata.abstract).toBe("A tested result.");
     expect(metadata.readme).toBe("Build with latexmk.");
   });
+
+  it("preserves nested TeX metadata arguments", () => {
+    root = mkdtempSync(join(tmpdir(), "paper-run-review-"));
+    writeFileSync(join(root, "main.tex"), "\\documentclass{article}\n\\title{A \\textbf{Robust} Result}\n\\author{Alice\\thanks{KAUST} \\and Bob}\n");
+
+    const metadata = extractManuscriptMetadata(root, {
+      entrypoint: "main.tex",
+      sourceGraph: ["main.tex"],
+      bibliography: [],
+      figures: [],
+      tables: [],
+      styles: [],
+      buildFiles: [],
+      evidenceFiles: [],
+      missingSourceFiles: [],
+    });
+
+    expect(metadata.title).toBe("A \\textbf{Robust} Result");
+    expect(metadata.authors).toEqual(["AliceKAUST", "Bob"]);
+  });
 });
