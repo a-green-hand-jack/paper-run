@@ -2,6 +2,19 @@
 
 All notable changes to `paper-run` are documented here.
 
+## v0.5.0 - 2026-08-31
+
+### Added
+
+- `paper-run review` creates an isolated, report-only workspace for reviewing external TeX manuscripts without entering revision.
+- `paper-run transfer` and `paper-run adopt` import external TeX repositories into a resumable `existing-manuscript` production workspace.
+- Entrypoint/source-graph detection and metadata mapping for bibliography, figures, tables, styles, build files, and evidence surfaces.
+
+### Safety
+
+- External imports reject symlinks, special files, sensitive credential paths, and source/control-directory escapes.
+- Standalone review verifies the imported paper tree against an immutable Git checkpoint baseline.
+
 ## v0.4.0 - 2026-08-31
 
 ### Added
