@@ -62,7 +62,7 @@ export function makeTmpDir(prefix = "paper-run-it-"): string {
 }
 
 export function cleanupTmp(dir: string): void {
-  rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 200 });
 }
 
 /**
