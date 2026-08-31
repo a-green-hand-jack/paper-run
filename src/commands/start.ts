@@ -18,7 +18,7 @@
  * always safe to run again.
  */
 
-import { readRunState, readGatePolicy, updateRunState } from "../state/store.js";
+import { readRunState, readGatePolicy, updateRunState, readStageHistory, writeStageHistory } from "../state/store.js";
 import type { RunState } from "../state/schema.js";
 import { generateGatePreset } from "../state/gate-presets.js";
 import { writeGatePolicy } from "../state/store.js";
@@ -99,8 +99,23 @@ export async function startCommand(opts: StartOptions): Promise<void> {
       });
     }
   } else {
-    state = updateRunState(projectDir, {
-      plan: createRunPlan(opts.profile, opts.stages),
+    const plan = createRunPlan(opts.profile, opts.stages);
+    state = updateRunState(projectDir, { plan });
+    const history = readStageHistory(projectDir);
+    const timestamp = new Date().toISOString();
+    writeStageHistory(projectDir, {
+      ...history,
+      stages: [
+        ...history.stages,
+        ...plan.skipped.map((item) => ({
+          stage_id: item.stage,
+          status: "skipped" as const,
+          started_at: timestamp,
+          completed_at: timestamp,
+          commit_sha: "planned",
+          skip_reason: item.reason,
+        })),
+      ],
     });
   }
 
@@ -421,8 +436,9 @@ export async function statusCommand(opts: StatusOptions): Promise<void> {
           mode: state.mode,
           current_stage: state.current_stage,
           stage_status: state.stage_status,
-          completed: history.stages.filter((s) => s.status === "completed").length,
-          total: TOTAL_STAGES,
+           completed: history.stages.filter((s) => s.status === "completed" && (!state.plan || state.plan.stages.includes(s.stage_id))).length,
+           total: state.plan?.stages.length ?? TOTAL_STAGES,
+           skipped: state.plan?.skipped.length ?? 0,
           template_version: state.template_version,
           stage_timeout_multiplier:
             state.stage_timeout_multiplier ?? DEFAULT_STAGE_TIMEOUT_MULTIPLIER,
@@ -437,7 +453,7 @@ export async function statusCommand(opts: StatusOptions): Promise<void> {
   }
 
   const stage = getStage(state.current_stage);
-  const completed = history.stages.filter((s) => s.status === "completed").length;
+  const completed = history.stages.filter((s) => s.status === "completed" && (!state.plan || state.plan.stages.includes(s.stage_id))).length;
   const branch = await getCurrentBranch(projectDir).catch(() => state.run_branch);
 
   const { printKeyValues } = await import("../utils/logger.js");
@@ -447,7 +463,7 @@ export async function statusCommand(opts: StatusOptions): Promise<void> {
     ["Run", state.run_id],
     ["Mode", state.mode],
     ["Stage", `${stage.name} (${stageNumber(stage.id)}/${TOTAL_STAGES}) — ${state.stage_status}`],
-    ["Progress", `${completed}/${TOTAL_STAGES} complete`],
+    ["Progress", `${completed}/${state.plan?.stages.length ?? TOTAL_STAGES} selected stages complete`],
     ["Branch", branch],
     ["Template", state.template_version],
     ["Stage timeout", `${state.stage_timeout_multiplier ?? DEFAULT_STAGE_TIMEOUT_MULTIPLIER}x`],

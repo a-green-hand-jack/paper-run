@@ -182,6 +182,7 @@ const PublicationVariantSchema = z.object({
   error: z.string().optional(),
   stdout: z.string().optional(),
   stderr: z.string().optional(),
+  output_digest: z.string().regex(/^sha256:[0-9a-f]{64}$/).optional(),
 });
 
 export const PublicationSchema = z.object({

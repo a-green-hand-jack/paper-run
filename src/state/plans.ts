@@ -83,5 +83,13 @@ export function validateRunPlan(stages: readonly string[]): void {
 
 export function planStages(plan: RunPlan): StageId[] {
   validateRunPlan(plan.stages);
+  const selected = new Set(plan.stages);
+  const expectedSkipped = PIPELINE_STAGES.filter((stage) => !selected.has(stage));
+  if (
+    plan.skipped.length !== expectedSkipped.length ||
+    plan.skipped.some((item, index) => item.stage !== expectedSkipped[index] || !item.reason)
+  ) {
+    throw new PaperRunError("Run plan skipped-stage metadata is inconsistent with its selected stages.");
+  }
   return plan.stages as StageId[];
 }

@@ -5,7 +5,7 @@ import { execa } from "execa";
 
 import { readRunState, readStageHistory, updateRunState, writeStageHistory } from "../state/store.js";
 import { replacePaperMode, switchOperatingMode } from "../state/mode.js";
-import { GatePolicySchema, type RunState, type StageHistory, type StageRecord } from "../state/schema.js";
+import { GatePolicySchema, RunStateSchema, type RunState, type StageHistory, type StageRecord } from "../state/schema.js";
 import { switchGatePreset } from "../state/gate-presets.js";
 import {
   getCurrentBranch,
@@ -51,6 +51,7 @@ export async function prepareRunResume(projectDir: string): Promise<RunState> {
       hint: "Run `paper-run checkpoint` to mark the current committed point, or return to the run checkpoint without resetting or discarding work.",
     });
   }
+  await verifyCheckpointPlan(projectDir, state);
 
   const dirty = await checkDirtyState(projectDir);
   const changed = [...new Set([...dirty.stagedFiles, ...dirty.unstagedFiles, ...dirty.untrackedFiles])];
@@ -76,6 +77,26 @@ export async function prepareRunResume(projectDir: string): Promise<RunState> {
   const checkpoint = await findLastCheckpoint(projectDir, state.run_id);
   if (!checkpoint) throw new PaperRunError(`No checkpoint found for run ${state.run_id}.`);
   return reconcileCheckpoint(projectDir, state, checkpoint);
+}
+
+async function verifyCheckpointPlan(projectDir: string, state: RunState): Promise<void> {
+  try {
+    const path = `${PAPER_RUN_DIR}/${STATE_FILES.run}`;
+    const { stdout } = await execa("git", ["show", `HEAD:${path}`], { cwd: projectDir });
+    const checkpointState = RunStateSchema.parse(JSON.parse(stdout));
+    if (checkpointState.plan === undefined && state.plan !== undefined) {
+      throw new PaperRunError("Cannot resume: this run checkpoint predates execution-plan support.", {
+        hint: "Run `paper-run checkpoint` after reviewing the plan, then retry resume.",
+      });
+    }
+    if (checkpointState.plan !== undefined && !isDeepStrictEqual(checkpointState.plan, state.plan)) {
+      throw new PaperRunError("Cannot resume: the execution plan differs from the plan recorded at HEAD.", {
+        hint: "Restore .paper-run/run.json from the current checkpoint; run scope cannot change during resume.",
+      });
+    }
+  } catch (error) {
+    if (error instanceof PaperRunError) throw error;
+  }
 }
 
 function matchesTimeoutRecovery(projectDir: string, state: RunState, file: string): boolean {
@@ -235,6 +256,7 @@ function reconcileHistory(
 
   const limit = stageNumber(checkpointStage);
   const stages = history.stages.filter((record) => {
+    if (record.status === "skipped") return true;
     const position = stageNumber(record.stage_id);
     return position < limit || (position === limit && status !== undefined);
   }).map((record) =>

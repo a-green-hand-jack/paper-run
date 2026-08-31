@@ -2,13 +2,19 @@
 
 All notable changes to `paper-run` are documented here.
 
-## Unreleased
+## v0.4.0 - 2026-08-31
 
 ### Added
 
 - Validated execution profiles and custom ordered stage plans, with fixed plans persisted in `run.json` and omitted stages recorded in stage history.
 - `paper-run validate` and `paper-run publication status` diagnostics for preflight checks and resumable publication builds.
 - Per-variant publication build state in `.paper-run/publication.json`; completed variants are reused after resume and failed or timed-out variants are retried.
+
+### Reliability
+
+- Execution plans are bound to checkpoint state, skipped history survives resume reconciliation, and selective runs only create candidate tags when the candidate stage was selected.
+- Publication artifacts are reused only when their declaration, digest, structure, and freshness still match.
+- Added an ESLint 9 flat configuration and restored `npm run lint`.
 
 ## v0.3.0 - 2026-08-31
 
