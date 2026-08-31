@@ -6,14 +6,14 @@ An OpenCode-native paper writing harness for autonomous and collaborative end-to
 
 `paper-run` is a globally-installed CLI that orchestrates end-to-end paper writing by driving [OpenCode](https://opencode.ai) as the agent runtime. It works with the [agent-writing-harness](https://github.com/a-green-hand-jack/agent-writing-harness) template to provide a complete paper production pipeline.
 
-Version `v0.3.0` has completed a clean 13/13 autonomous headless acceptance run on
+Version `v0.4.0` builds on the clean 13/13 autonomous headless acceptance run on
 PaperWrite-Bench `pwb-0002`; see [issue #21](https://github.com/a-green-hand-jack/paper-run/issues/21)
 for the run configuration, checkpoints, timing, and publication artifacts.
 
 ## Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/a-green-hand-jack/paper-run/v0.3.0/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/a-green-hand-jack/paper-run/v0.4.0/install.sh | sh
 ```
 
 The tag, release tarball, and checksum are version-pinned for reproducible CI, Docker,
