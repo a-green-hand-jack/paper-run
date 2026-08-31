@@ -2,6 +2,19 @@
 
 All notable changes to `paper-run` are documented here.
 
+## v0.2.0 - 2026-08-31
+
+### Added
+
+- `--stage-timeout-multiplier` and `PAPER_RUN_STAGE_TIMEOUT_MULTIPLIER` for slower model gateways.
+- Run-state and checkpoint provenance for the selected timeout multiplier, including deterministic resume behavior.
+- A version-pinned, checksum-verified installer for CI, Docker, and agent containers.
+
+### Fixed
+
+- Timeout failures now record an actionable retry reason instead of returning only exit code 2.
+- Integration fixtures no longer inherit a cloned harness Git directory or require host Git identity.
+
 ## v0.1.0 - 2026-08-30
 
 Initial public release.

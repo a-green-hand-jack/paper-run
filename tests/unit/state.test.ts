@@ -82,6 +82,12 @@ describe("RunStateSchema", () => {
     const result = RunStateSchema.safeParse(data);
     expect(result.success).toBe(true);
   });
+
+  it("accepts a positive stage timeout multiplier and rejects unsafe values", () => {
+    expect(RunStateSchema.safeParse(makeRunState({ stage_timeout_multiplier: 2 })).success).toBe(true);
+    expect(RunStateSchema.safeParse(makeRunState({ stage_timeout_multiplier: 0 })).success).toBe(false);
+    expect(RunStateSchema.safeParse(makeRunState({ stage_timeout_multiplier: 101 })).success).toBe(false);
+  });
 });
 
 describe("GatePolicySchema", () => {

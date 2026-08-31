@@ -28,6 +28,8 @@ export const GatePolicyAction = z.enum(["auto", "await_human", "skip"]);
 
 export const MaterialVerdict = z.enum(["usable", "partial", "unusable"]);
 
+export const StageTimeoutMultiplierSchema = z.number().finite().positive().max(100);
+
 // ---------------------------------------------------------------------------
 // run.json
 // ---------------------------------------------------------------------------
@@ -42,9 +44,16 @@ export const RunStateSchema = z.object({
   started_at: z.string().datetime(),
   updated_at: z.string().datetime(),
   template_version: z.string().min(1),
+  stage_timeout_multiplier: StageTimeoutMultiplierSchema.optional(),
   material_hash: z.string().optional(),
   session_id: z.string().optional(),
   server_port: z.number().int().positive().optional(),
+  timeout_recovery: z
+    .object({
+      stage: z.string().min(1),
+      files: z.record(z.string(), z.string().regex(/^(sha256:[0-9a-f]{64}|missing)$/)),
+    })
+    .optional(),
   error: z
     .object({
       stage: z.string(),

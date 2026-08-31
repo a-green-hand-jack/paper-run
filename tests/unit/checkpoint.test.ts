@@ -15,7 +15,11 @@ import {
   writeStageHistory,
 } from "../../src/state/store.js";
 import type { RunState } from "../../src/state/schema.js";
-import { commitCheckpoint, getTrailersFromCommit } from "../../src/utils/git.js";
+import {
+  commitCheckpoint,
+  getTrailersFromCommit,
+  worktreeFileDigest,
+} from "../../src/utils/git.js";
 
 let repo: string;
 let cwdSpy: ReturnType<typeof vi.spyOn>;
@@ -126,6 +130,24 @@ describe("prepareRunResume", () => {
     expect(execaSync("git", ["status", "--porcelain", "notes.txt"], { cwd: repo }).stdout).toContain("??");
   });
 
+  it("allows only unchanged partial output recorded after a timeout", async () => {
+    await checkpoint();
+    const partial = join(repo, "partial-stage-output.txt");
+    writeFileSync(partial, "partial\n");
+    writeRunState(repo, state({
+      timeout_recovery: {
+        stage: "bootstrap",
+        files: { "partial-stage-output.txt": worktreeFileDigest(repo, "partial-stage-output.txt") },
+      },
+    }));
+
+    await expect(prepareRunResume(repo)).resolves.toMatchObject({ current_stage: "bootstrap" });
+    expect(readFileSync(partial, "utf-8")).toBe("partial\n");
+
+    writeFileSync(partial, "changed after timeout\n");
+    await expect(prepareRunResume(repo)).rejects.toThrow(/uncheckpointed project changes/);
+  });
+
   it("rolls an uncheckpointed mode switch back to validated trailer provenance", async () => {
     await checkpoint();
     switchOperatingMode(repo, "collaborative");
@@ -182,6 +204,7 @@ describe("prepareRunResume", () => {
       status: "blocked",
       runId: "run12345",
       mode: "autonomous",
+      stageTimeoutMultiplier: 2,
       sessionId: "ses_checkpoint",
       templateVersion: "v0.3.0",
       materialHash: "sha256:abc",
@@ -193,6 +216,7 @@ describe("prepareRunResume", () => {
       stage_status: "blocked",
       session_id: "ses_checkpoint",
       material_hash: "sha256:abc",
+      stage_timeout_multiplier: 2,
     });
   });
 

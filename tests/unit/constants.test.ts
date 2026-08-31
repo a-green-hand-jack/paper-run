@@ -38,7 +38,7 @@ describe("constants", () => {
     expect(TRAILER_KEYS[0]).toBe("Paper-Run-Stage");
     expect(TRAILER_KEYS).toContain("Paper-Run-Kind");
     expect(TRAILER_KEYS).toContain("Paper-Run-Locked-Authorization");
-    expect(TRAILER_KEYS.length).toBe(10);
+    expect(TRAILER_KEYS.length).toBe(11);
     for (const key of TRAILER_KEYS) {
       expect(key.startsWith("Paper-Run-")).toBe(true);
     }

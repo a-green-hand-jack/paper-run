@@ -14,7 +14,12 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execaSync } from "execa";
 
-import { statusCommand, modeCommand } from "../../src/commands/start.js";
+import {
+  statusCommand,
+  modeCommand,
+  parseStageTimeoutMultiplier,
+  resolveStageTimeoutMultiplier,
+} from "../../src/commands/start.js";
 import { resolveResumeSession } from "../../src/commands/start.js";
 import {
   writeRunState,
@@ -221,6 +226,18 @@ describe("modeCommand", () => {
 // ---------------------------------------------------------------------------
 
 describe("configured model check", () => {
+  it("parses only finite positive timeout multipliers", () => {
+    expect(parseStageTimeoutMultiplier("2")).toBe(2);
+    expect(() => parseStageTimeoutMultiplier("0")).toThrow(/Invalid stage timeout multiplier/);
+    expect(() => parseStageTimeoutMultiplier("Infinity")).toThrow(/Invalid stage timeout multiplier/);
+  });
+
+  it("prefers CLI over environment and preserves a configured run value", () => {
+    expect(resolveStageTimeoutMultiplier(undefined, "2", "3")).toBe(2);
+    expect(resolveStageTimeoutMultiplier(undefined, undefined, "3")).toBe(3);
+    expect(resolveStageTimeoutMultiplier(2, undefined, "2")).toBe(2);
+    expect(() => resolveStageTimeoutMultiplier(2, "3", undefined)).toThrow(/locked to/);
+  });
   it("prefers an explicit session and otherwise reuses checkpoint state", () => {
     expect(resolveResumeSession("explicit", "checkpoint")).toBe("explicit");
     expect(resolveResumeSession(undefined, "checkpoint")).toBe("checkpoint");

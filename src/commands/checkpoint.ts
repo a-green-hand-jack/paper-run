@@ -7,7 +7,14 @@ import { readRunState, readStageHistory, updateRunState, writeStageHistory } fro
 import { replacePaperMode, switchOperatingMode } from "../state/mode.js";
 import { GatePolicySchema, type RunState, type StageHistory, type StageRecord } from "../state/schema.js";
 import { switchGatePreset } from "../state/gate-presets.js";
-import { getCurrentBranch, findLastCheckpoint, verifyHeadConsistency, checkDirtyState, commitCheckpoint } from "../utils/git.js";
+import {
+  getCurrentBranch,
+  findLastCheckpoint,
+  verifyHeadConsistency,
+  checkDirtyState,
+  commitCheckpoint,
+  worktreeFileDigest,
+} from "../utils/git.js";
 import { PAPER_RUN_DIR, STATE_FILES } from "../utils/constants.js";
 import { PaperRunError } from "../utils/errors.js";
 import { requireProjectRoot } from "../utils/paths.js";
@@ -56,6 +63,7 @@ export async function prepareRunResume(projectDir: string): Promise<RunState> {
   const unsafe = changed.filter(
     (file) =>
       !GENERATED_RESUME_CHANGES.has(file) &&
+      !matchesTimeoutRecovery(projectDir, state, file) &&
       !(file === "PAPER.md" && paperModeOnly) &&
       !(file === `${PAPER_RUN_DIR}/${STATE_FILES.gatePolicy}` && gatePolicyModeOnly),
   );
@@ -68,6 +76,11 @@ export async function prepareRunResume(projectDir: string): Promise<RunState> {
   const checkpoint = await findLastCheckpoint(projectDir, state.run_id);
   if (!checkpoint) throw new PaperRunError(`No checkpoint found for run ${state.run_id}.`);
   return reconcileCheckpoint(projectDir, state, checkpoint);
+}
+
+function matchesTimeoutRecovery(projectDir: string, state: RunState, file: string): boolean {
+  const expected = state.timeout_recovery?.files[file];
+  return expected !== undefined && worktreeFileDigest(projectDir, file) === expected;
 }
 
 async function isPaperModeOnlyChange(projectDir: string, mode: RunState["mode"]): Promise<boolean> {
@@ -152,6 +165,9 @@ export async function checkpointCommand(opts: CheckpointOptions = {}): Promise<v
     status: "pending",
     runId: state.run_id,
     mode: state.mode,
+    ...(state.stage_timeout_multiplier !== undefined
+      ? { stageTimeoutMultiplier: state.stage_timeout_multiplier }
+      : {}),
     templateVersion: state.template_version,
     kind: "manual",
     stageAll: false,
@@ -188,6 +204,9 @@ function reconcileCheckpoint(
     template_version: checkpoint.trailers["Paper-Run-Template"]!,
     session_id: checkpoint.trailers["Paper-Run-Session"],
     material_hash: checkpoint.trailers["Paper-Run-Material-Hash"],
+    stage_timeout_multiplier: checkpoint.trailers["Paper-Run-Stage-Timeout-Multiplier"]
+      ? Number(checkpoint.trailers["Paper-Run-Stage-Timeout-Multiplier"])
+      : state.stage_timeout_multiplier,
     error: stageStatus === "blocked" && state.current_stage === stageId ? state.error : undefined,
   });
 }

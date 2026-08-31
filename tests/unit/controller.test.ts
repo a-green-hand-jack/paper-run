@@ -231,6 +231,80 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe("running a stage", () => {
+  it("restores the recorded multiplier for programmatic controller runs", async () => {
+    writeRunState(tmpDir, makeRunState({ stage_timeout_multiplier: 2.5 }));
+    const abort = new AbortController();
+    abort.abort();
+    const controller = new PipelineController({
+      client: mockClient(),
+      sessionId: "ses_1",
+      projectDir: tmpDir,
+      policy: generateGatePreset("autonomous"),
+      signal: abort.signal,
+    });
+
+    await expect(controller.run()).resolves.toMatchObject({ status: "interrupted" });
+    expect((controller as any).stageTimeoutMs(STAGES.bootstrap)).toBe(12.5 * 60_000);
+    expect((controller as any).stageTimeoutMs(STAGES.canonical_drafting)).toBe(112.5 * 60_000);
+  });
+
+  it("rejects a programmatic multiplier that conflicts with recorded state", async () => {
+    writeRunState(tmpDir, makeRunState({ stage_timeout_multiplier: 2 }));
+    const controller = new PipelineController({
+      client: mockClient(),
+      sessionId: "ses_1",
+      projectDir: tmpDir,
+      policy: generateGatePreset("autonomous"),
+      stageTimeoutMultiplier: 3,
+    });
+
+    await expect(controller.run()).rejects.toThrow(/locked to/);
+  });
+
+  it("aborts a timed-out session and records partial output for safe resume", async () => {
+    const originalTimeout = STAGES.bootstrap.timeoutMs;
+    STAGES.bootstrap.timeoutMs = 10;
+    const client = mockClient({
+      onPrompt: () => writeFileSync(join(tmpDir, "partial-stage-output.txt"), "partial\n"),
+    });
+    client.event.subscribe.mockImplementation((_args: unknown, request: { signal?: AbortSignal }) =>
+      Promise.resolve({
+        stream: {
+          [Symbol.asyncIterator]() {
+            return {
+              next: () => new Promise<IteratorResult<unknown>>((resolve) => {
+                if (request.signal?.aborted) {
+                  resolve({ done: true, value: undefined });
+                  return;
+                }
+                request.signal?.addEventListener(
+                  "abort",
+                  () => resolve({ done: true, value: undefined }),
+                  { once: true },
+                );
+              }),
+            };
+          },
+        },
+      }),
+    );
+
+    try {
+      const result = await makeController(client).run();
+      expect(result).toMatchObject({ status: "stopped", stageId: "bootstrap" });
+      expect(client.session.abort).toHaveBeenCalledWith(expect.objectContaining({ sessionID: "ses_1" }), expect.anything());
+      expect(readRunState(tmpDir)).toMatchObject({
+        stage_status: "pending",
+        timeout_recovery: {
+          stage: "bootstrap",
+          files: { "partial-stage-output.txt": expect.stringMatching(/^sha256:/) },
+        },
+      });
+    } finally {
+      STAGES.bootstrap.timeoutMs = originalTimeout;
+    }
+  });
+
   it("prompts, validates, checkpoints, and advances", async () => {
     const client = mockClient({
       onPrompt: () => satisfyBootstrap(tmpDir),

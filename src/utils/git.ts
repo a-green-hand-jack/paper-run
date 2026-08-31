@@ -4,13 +4,14 @@
  */
 
 import { execaSync, execa } from "execa";
-import { randomUUID } from "node:crypto";
-import { resolve } from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { lstatSync, readFileSync, readlinkSync } from "node:fs";
+import { resolve, sep } from "node:path";
 
 import { GIT, TRAILER_KEYS } from "../utils/constants.js";
 import { MODES } from "../utils/constants.js";
 import type { Mode, TrailerKey } from "../utils/constants.js";
-import { StageStatusSchema, type RunState } from "../state/schema.js";
+import { StageStatusSchema, StageTimeoutMultiplierSchema, type RunState } from "../state/schema.js";
 import { PIPELINE_STAGES } from "../state/gate-presets.js";
 import { PaperRunError } from "../utils/errors.js";
 
@@ -51,6 +52,7 @@ export interface CheckpointOpts {
   status: RunState["stage_status"];
   runId: string;
   mode: Mode;
+  stageTimeoutMultiplier?: number;
   sessionId?: string;
   templateVersion: string;
   materialHash?: string;
@@ -68,6 +70,13 @@ export interface CheckpointOpts {
  */
 export async function commitCheckpoint(opts: CheckpointOpts, cwd: string): Promise<string> {
   const dir = resolve(cwd);
+
+  if (
+    opts.stageTimeoutMultiplier !== undefined &&
+    !StageTimeoutMultiplierSchema.safeParse(opts.stageTimeoutMultiplier).success
+  ) {
+    throw new PaperRunError("Invalid stage timeout multiplier for checkpoint.");
+  }
 
   if (opts.stageAll !== false) {
     await execa("git", ["add", "-A"], { cwd: dir });
@@ -119,6 +128,9 @@ function buildTrailers(opts: CheckpointOpts): string {
     ["Paper-Run-Mode", opts.mode],
   ];
 
+  if (opts.stageTimeoutMultiplier !== undefined) {
+    pairs.push(["Paper-Run-Stage-Timeout-Multiplier", String(opts.stageTimeoutMultiplier)]);
+  }
   if (opts.sessionId) pairs.push(["Paper-Run-Session", opts.sessionId]);
   pairs.push(["Paper-Run-Template", opts.templateVersion]);
   if (opts.materialHash) pairs.push(["Paper-Run-Material-Hash", opts.materialHash]);
@@ -204,6 +216,13 @@ export function parseTrailers(commitMessage: string): Trailers {
   }
   if (lockedAuthorization && trailers["Paper-Run-Kind"] !== "manual") {
     throw invalidTrailers("has a locked-contract authorization on a non-manual checkpoint");
+  }
+  const multiplier = trailers["Paper-Run-Stage-Timeout-Multiplier"];
+  if (multiplier !== undefined) {
+    const value = Number(multiplier);
+    if (!StageTimeoutMultiplierSchema.safeParse(value).success) {
+      throw invalidTrailers("has an invalid stage timeout multiplier");
+    }
   }
   const timestamp = trailers["Paper-Run-Timestamp"]!;
   const timestampMs = Date.parse(timestamp);
@@ -308,6 +327,25 @@ export async function checkDirtyState(cwd: string): Promise<DirtyState> {
     unstagedFiles: names(unstaged.stdout),
     untrackedFiles: names(untracked.stdout),
   };
+}
+
+/** Digest one Git-reported worktree path, including deletion and symlink state. */
+export function worktreeFileDigest(cwd: string, path: string): string {
+  const root = resolve(cwd);
+  const absolute = resolve(root, path);
+  if (absolute !== root && !absolute.startsWith(`${root}${sep}`)) {
+    throw new PaperRunError(`Worktree path escapes the project: ${path}`);
+  }
+  try {
+    const stat = lstatSync(absolute);
+    const content = stat.isSymbolicLink()
+      ? Buffer.from(`symlink:${readlinkSync(absolute)}`)
+      : readFileSync(absolute);
+    return `sha256:${createHash("sha256").update(content).digest("hex")}`;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "missing";
+    throw error;
+  }
 }
 
 /** True if the directory is a git repository. */

@@ -50,6 +50,10 @@ program
   .option("--headless", "run the pipeline without attaching a TUI")
   .option("--model <model>", "model for the TUI session")
   .option("--variant <variant>", "reasoning variant for stage prompts")
+  .option(
+    "--stage-timeout-multiplier <number>",
+    "multiply every pipeline stage timeout (or set PAPER_RUN_STAGE_TIMEOUT_MULTIPLIER)",
+  )
   .action(async (opts) => {
     await startCommand(opts);
   });

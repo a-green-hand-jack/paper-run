@@ -13,8 +13,11 @@ for the run configuration, checkpoints, timing, and publication artifacts.
 ## Installation
 
 ```bash
-npm install -g paper-run
+curl -fsSL https://raw.githubusercontent.com/a-green-hand-jack/paper-run/v0.2.0/install.sh | sh
 ```
+
+The tag, release tarball, and checksum are version-pinned for reproducible CI, Docker,
+and agent-container installs. The installer requires `curl`, Node.js, and npm.
 
 **Prerequisites:**
 - Node.js ≥ 20
@@ -49,12 +52,18 @@ paper-run init ~/papers/my-paper --brief ~/briefs/my-paper.md \
 paper-run init [directory]    # Create a new writing repo from the harness template
 paper-run [start]             # Launch OpenCode TUI and start the pipeline
 paper-run start --headless --mode autonomous \
-  --model openai/gpt-5.6-sol --variant high
+  --model openai/gpt-5.6-sol --variant high \
+  --stage-timeout-multiplier 2
 paper-run status              # Print current pipeline status
 paper-run mode [mode]         # Show or switch operating mode
 paper-run resume              # Resume from the last checkpoint
 paper-run checkpoint          # Force a checkpoint commit
 ```
+
+`--stage-timeout-multiplier` scales every stage's default budget for slower model
+gateways. `PAPER_RUN_STAGE_TIMEOUT_MULTIPLIER` provides the same setting for container
+wrappers. The selected value is recorded in run state and checkpoint trailers; resumes
+reuse it and reject a conflicting override.
 
 ## Checkpoints and resume
 

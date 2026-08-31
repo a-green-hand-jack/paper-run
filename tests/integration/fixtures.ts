@@ -14,6 +14,11 @@ import { execaSync } from "execa";
 
 import { TEMPLATE_REPO, DEFAULT_TEMPLATE_VERSION } from "../../src/utils/constants.js";
 
+process.env.GIT_AUTHOR_NAME ??= "Paper Run Integration Test";
+process.env.GIT_AUTHOR_EMAIL ??= "paper-run@example.test";
+process.env.GIT_COMMITTER_NAME ??= "Paper Run Integration Test";
+process.env.GIT_COMMITTER_EMAIL ??= "paper-run@example.test";
+
 /** Where the template is cached for the duration of a test run. */
 const CACHE_DIR = join(tmpdir(), `paper-run-template-cache-${DEFAULT_TEMPLATE_VERSION}`);
 
@@ -69,6 +74,7 @@ export function cleanupTmp(dir: string): void {
 export function makeWritingRepo(dir: string): void {
   mkdirSync(dir, { recursive: true });
   cpSync(templateCache(), dir, { recursive: true });
+  rmSync(join(dir, ".git"), { recursive: true, force: true });
 
   execaSync("git", ["init"], { cwd: dir });
   execaSync("git", ["config", "user.email", "test@example.com"], { cwd: dir });

@@ -23,6 +23,11 @@ import type { RunState } from "../state/schema.js";
 import { generateGatePreset } from "../state/gate-presets.js";
 import { writeGatePolicy } from "../state/store.js";
 import { switchOperatingMode } from "../state/mode.js";
+import {
+  DEFAULT_STAGE_TIMEOUT_MULTIPLIER,
+  parseStageTimeoutMultiplier,
+  resolveStageTimeoutMultiplier,
+} from "../state/timeout.js";
 import { prepareRunResume } from "./checkpoint.js";
 
 import { assertNoConcurrentRun, attachRun, detachRun } from "../opencode/attach.js";
@@ -55,7 +60,10 @@ export interface StartOptions {
   headless?: boolean;
   model?: string;
   variant?: string;
+  stageTimeoutMultiplier?: string | number;
 }
+
+export { parseStageTimeoutMultiplier, resolveStageTimeoutMultiplier };
 
 export async function startCommand(opts: StartOptions): Promise<void> {
   const projectDir = requireProjectRoot();
@@ -85,6 +93,16 @@ export async function startCommand(opts: StartOptions): Promise<void> {
     state = jumpToStage(projectDir, opts.stage);
   }
 
+  const configuredMultiplier = state.stage_timeout_multiplier;
+  const stageTimeoutMultiplier = resolveStageTimeoutMultiplier(
+    configuredMultiplier,
+    opts.stageTimeoutMultiplier,
+    process.env.PAPER_RUN_STAGE_TIMEOUT_MULTIPLIER,
+  );
+  if (configuredMultiplier === undefined) {
+    state = updateRunState(projectDir, { stage_timeout_multiplier: stageTimeoutMultiplier });
+  }
+
   reportResumePoint(state, projectDir);
 
   // --- server + session ---
@@ -110,6 +128,7 @@ export async function startCommand(opts: StartOptions): Promise<void> {
     policy,
     ...(opts.model !== undefined ? { model: opts.model } : {}),
     ...(opts.variant !== undefined ? { variant: opts.variant } : {}),
+    stageTimeoutMultiplier,
     unattended: opts.headless === true,
     signal: abort.signal,
   });
@@ -383,6 +402,8 @@ export async function statusCommand(opts: StatusOptions): Promise<void> {
           completed: history.stages.filter((s) => s.status === "completed").length,
           total: TOTAL_STAGES,
           template_version: state.template_version,
+          stage_timeout_multiplier:
+            state.stage_timeout_multiplier ?? DEFAULT_STAGE_TIMEOUT_MULTIPLIER,
           ...(state.error ? { error: state.error } : {}),
         },
         null,
@@ -406,6 +427,7 @@ export async function statusCommand(opts: StatusOptions): Promise<void> {
     ["Progress", `${completed}/${TOTAL_STAGES} complete`],
     ["Branch", branch],
     ["Template", state.template_version],
+    ["Stage timeout", `${state.stage_timeout_multiplier ?? DEFAULT_STAGE_TIMEOUT_MULTIPLIER}x`],
     ["Gate here", policy.gates[state.current_stage]?.policy ?? "await_human"],
   ]);
 

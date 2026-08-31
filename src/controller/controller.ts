@@ -38,7 +38,14 @@ import {
   readStageHistory,
   writeStageHistory,
 } from "../state/store.js";
-import { RunStateSchema, type GatePolicy, type StageHistory, type StageRecord } from "../state/schema.js";
+import {
+  RunStateSchema,
+  type GatePolicy,
+  type RunState,
+  type StageHistory,
+  type StageRecord,
+} from "../state/schema.js";
+import { resolveStageTimeoutMultiplier } from "../state/timeout.js";
 
 import { remainingStages, stageNumber, TOTAL_STAGES } from "../pipeline/stages.js";
 import type { Stage } from "../pipeline/stages.js";
@@ -75,7 +82,12 @@ import {
 import { waitForIdle } from "../opencode/events.js";
 import type { RelevantEvent } from "../opencode/events.js";
 
-import { checkDirtyState, commitCheckpoint, tagCandidate } from "../utils/git.js";
+import {
+  checkDirtyState,
+  commitCheckpoint,
+  tagCandidate,
+  worktreeFileDigest,
+} from "../utils/git.js";
 import { StageTimeoutError, PaperRunError } from "../utils/errors.js";
 import { log } from "../utils/logger.js";
 import { PAPER_RUN_DIR, STATE_FILES } from "../utils/constants.js";
@@ -108,6 +120,8 @@ export interface ControllerOptions {
   model?: string;
   /** Provider-specific reasoning variant for stage prompts. */
   variant?: string;
+  /** Run-wide multiplier applied to declarative stage timeout budgets. */
+  stageTimeoutMultiplier?: number;
   /** No TUI is attached, so an unanswered permission must fail fast. */
   unattended?: boolean;
   signal?: AbortSignal;
@@ -124,6 +138,7 @@ export class PipelineController {
   private materialVerdict: Verdict | undefined;
   /** Session currently running a turn, so an interrupt reaches cold reviews too. */
   private activeSessionId: string;
+  private stageTimeoutMultiplier = 1;
 
   constructor(opts: ControllerOptions) {
     this.opts = opts;
@@ -133,7 +148,16 @@ export class PipelineController {
 
   /** Run the pipeline from wherever the recorded state left off. */
   async run(): Promise<PipelineResult> {
-    const state = readRunState(this.opts.projectDir);
+    let state = readRunState(this.opts.projectDir);
+    this.stageTimeoutMultiplier = resolveStageTimeoutMultiplier(
+      state.stage_timeout_multiplier,
+      this.opts.stageTimeoutMultiplier,
+    );
+    if (state.stage_timeout_multiplier === undefined) {
+      state = updateRunState(this.opts.projectDir, {
+        stage_timeout_multiplier: this.stageTimeoutMultiplier,
+      });
+    }
     this.materialVerdict = this.recoverVerdict();
 
     const stages = remainingStages(
@@ -189,6 +213,8 @@ export class PipelineController {
     updateRunState(this.opts.projectDir, {
       current_stage: stage.id,
       stage_status: "running",
+      error: undefined,
+      timeout_recovery: undefined,
     });
 
     const startedAt = new Date().toISOString();
@@ -228,8 +254,19 @@ export class PipelineController {
         if (err instanceof StageTimeoutError) {
           // A timed-out stage has no checkpoint, so leaving it pending means a
           // resume simply re-runs it.
-          updateRunState(this.opts.projectDir, { stage_status: "pending" });
-          return { status: "stopped", reason: `stage timed out after ${stage.timeoutMs / 60000}min` };
+          const reason = `stage timed out after ${this.stageTimeoutMs(stage) / 60000}min`;
+          const timeoutRecovery = await this.captureTimeoutRecovery(stage);
+          updateRunState(this.opts.projectDir, {
+            stage_status: "pending",
+            timeout_recovery: timeoutRecovery,
+            error: { stage: stage.id, message: reason, at: new Date().toISOString() },
+          });
+          log.error(`${stage.name} ${reason}.`);
+          log.hint("Resume this run to retry the stage with the recorded timeout configuration.");
+          return {
+            status: "stopped",
+            reason,
+          };
         }
         if (this.aborted()) return { status: "interrupted" };
         throw err;
@@ -340,8 +377,16 @@ export class PipelineController {
       await this.takeTurn(stage, this.buildStagePrompt(stage, guidance));
     } catch (err) {
       if (err instanceof StageTimeoutError) {
-        updateRunState(this.opts.projectDir, { stage_status: "pending" });
-        return { status: "stopped", reason: "stage timed out during revision" };
+        const reason = `stage timed out during revision after ${this.stageTimeoutMs(stage) / 60000}min`;
+        const timeoutRecovery = await this.captureTimeoutRecovery(stage);
+        updateRunState(this.opts.projectDir, {
+          stage_status: "pending",
+          timeout_recovery: timeoutRecovery,
+          error: { stage: stage.id, message: reason, at: new Date().toISOString() },
+        });
+        log.error(`${stage.name} ${reason}.`);
+        log.hint("Resume this run to retry the stage with the recorded timeout configuration.");
+        return { status: "stopped", reason };
       }
       if (this.aborted()) return { status: "interrupted" };
       throw err;
@@ -559,6 +604,9 @@ export class PipelineController {
       return isDeepStrictEqual(current, {
         ...baseline,
         stage_status: "approved",
+        ...(baseline.stage_timeout_multiplier === undefined
+          ? { stage_timeout_multiplier: current.stage_timeout_multiplier }
+          : {}),
         updated_at: current.updated_at,
       });
     } catch {
@@ -606,11 +654,23 @@ export class PipelineController {
       await waitForIdle(this.opts.client, {
         sessionId,
         directory: this.opts.projectDir,
-        timeoutMs: stage.timeoutMs,
+        timeoutMs: this.stageTimeoutMs(stage),
         stageId: stage.id,
         ...(this.opts.signal ? { signal: this.opts.signal } : {}),
         onEvent: (event) => this.onEvent(event),
       });
+    } catch (error) {
+      if (error instanceof StageTimeoutError) {
+        try {
+          await abortAndWaitForIdle(this.opts.client, sessionId, this.opts.projectDir);
+        } catch (cleanupError) {
+          throw new PaperRunError(
+            `${error.message} The OpenCode session did not settle after abort: ${describeError(cleanupError)}`,
+            { hint: "Stop the OpenCode server before retrying so it cannot continue modifying the project." },
+          );
+        }
+      }
+      throw error;
     } finally {
       this.activeSessionId = this.opts.sessionId;
     }
@@ -671,7 +731,7 @@ export class PipelineController {
 
     const publicationBuild = await buildPublicationArtifacts(this.opts.projectDir, {
       ...(publicationBaseline ? { baseline: publicationBaseline } : {}),
-      timeoutMs: stage.timeoutMs,
+      timeoutMs: this.stageTimeoutMs(stage),
       ...(this.opts.signal ? { signal: this.opts.signal } : {}),
     });
     if (this.aborted()) {
@@ -796,6 +856,8 @@ export class PipelineController {
         status,
         runId: state.run_id,
         mode: state.mode,
+        stageTimeoutMultiplier:
+          state.stage_timeout_multiplier ?? this.stageTimeoutMultiplier,
         templateVersion: state.template_version,
         ...(state.session_id ? { sessionId: state.session_id } : {}),
         ...(state.material_hash ? { materialHash: state.material_hash } : {}),
@@ -850,6 +912,29 @@ export class PipelineController {
     log.info("  Review the candidate before treating it as submission-ready.");
 
     return { status: "completed", runId: state.run_id, tag };
+  }
+
+  private stageTimeoutMs(stage: Stage): number {
+    return Math.ceil(stage.timeoutMs * this.stageTimeoutMultiplier);
+  }
+
+  private async captureTimeoutRecovery(stage: Stage): Promise<RunState["timeout_recovery"]> {
+    const dirty = await checkDirtyState(this.opts.projectDir);
+    const generated = new Set([
+      `${PAPER_RUN_DIR}/${STATE_FILES.run}`,
+      `${PAPER_RUN_DIR}/${STATE_FILES.stageHistory}`,
+    ]);
+    const paths = [...new Set([
+      ...dirty.stagedFiles,
+      ...dirty.unstagedFiles,
+      ...dirty.untrackedFiles,
+    ])].filter((path) => !generated.has(path));
+    return {
+      stage: stage.id,
+      files: Object.fromEntries(
+        paths.map((path) => [path, worktreeFileDigest(this.opts.projectDir, path)]),
+      ),
+    };
   }
 
   // -------------------------------------------------------------------------

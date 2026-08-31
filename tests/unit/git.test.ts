@@ -87,6 +87,7 @@ describe("commitCheckpoint", () => {
         status: "completed",
         runId: "abcd1234",
         mode: "autonomous",
+        stageTimeoutMultiplier: 2,
         sessionId: "ses_xyz",
         templateVersion: "v0.3.0",
         materialHash: "sha256:deadbeef",
@@ -101,6 +102,7 @@ describe("commitCheckpoint", () => {
     expect(trailers["Paper-Run-Status"]).toBe("completed");
     expect(trailers["Paper-Run-Run"]).toBe("abcd1234");
     expect(trailers["Paper-Run-Mode"]).toBe("autonomous");
+    expect(trailers["Paper-Run-Stage-Timeout-Multiplier"]).toBe("2");
     expect(trailers["Paper-Run-Session"]).toBe("ses_xyz");
     expect(trailers["Paper-Run-Template"]).toBe("v0.3.0");
     expect(trailers["Paper-Run-Material-Hash"]).toBe("sha256:deadbeef");
@@ -119,6 +121,19 @@ describe("commitCheckpoint", () => {
       tmpDir,
     );
     expect(sha).toHaveLength(40);
+  });
+
+  it("rejects invalid timeout provenance before committing", async () => {
+    const before = execaSync("git", ["rev-parse", "HEAD"], { cwd: tmpDir }).stdout.trim();
+    await expect(commitCheckpoint({
+      stageId: "bootstrap",
+      status: "completed",
+      runId: "abcd1234",
+      mode: "autonomous",
+      stageTimeoutMultiplier: 0,
+      templateVersion: "v0.3.0",
+    }, tmpDir)).rejects.toThrow(/Invalid stage timeout multiplier/);
+    expect(execaSync("git", ["rev-parse", "HEAD"], { cwd: tmpDir }).stdout.trim()).toBe(before);
   });
 
   it("stages only explicit checkpoint paths and rejects every other project change", async () => {

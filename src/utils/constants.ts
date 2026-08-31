@@ -73,6 +73,7 @@ export const TRAILER_KEYS = [
   "Paper-Run-Status",
   "Paper-Run-Run",
   "Paper-Run-Mode",
+  "Paper-Run-Stage-Timeout-Multiplier",
   "Paper-Run-Session",
   "Paper-Run-Template",
   "Paper-Run-Material-Hash",
