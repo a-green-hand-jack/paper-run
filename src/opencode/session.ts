@@ -5,7 +5,7 @@
  * Independent reviews use a newly created cold session for every attempt.
  */
 
-import type { OpencodeClient } from "@opencode-ai/sdk/v2";
+import type { OpencodeClient, Message } from "@opencode-ai/sdk/v2";
 
 import { OpencodeError } from "../utils/errors.js";
 import { log } from "../utils/logger.js";
@@ -96,6 +96,65 @@ export async function sendPrompt(
     }),
     "session prompt",
   );
+}
+
+export interface SessionUsageSnapshot {
+  modelCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  reasoningTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  cost: number;
+  transcriptMessages?: number;
+}
+
+/** Aggregate usage without retaining transcript contents. */
+export async function getSessionUsage(
+  client: OpencodeClient,
+  sessionId: string,
+  opts: { timeoutMs?: number } = {},
+): Promise<SessionUsageSnapshot | null> {
+  const timeoutMs = opts.timeoutMs ?? 2_000;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const result = await Promise.race([
+      client.session.messages({ sessionID: sessionId }),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), timeoutMs);
+      }),
+    ]);
+    if (result === null) return null;
+    if (result.error || !result.data || !Array.isArray(result.data)) return null;
+    const projectedMessages = result.data;
+    const usage: SessionUsageSnapshot = {
+      modelCalls: 0,
+      inputTokens: 0,
+      outputTokens: 0,
+      reasoningTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      cost: 0,
+    };
+    for (const projected of projectedMessages) {
+      if (!("info" in projected)) continue;
+      const message = projected.info as Message;
+      if (message.role !== "assistant") continue;
+      usage.modelCalls += 1;
+      usage.inputTokens += message.tokens?.input ?? 0;
+      usage.outputTokens += message.tokens?.output ?? 0;
+      usage.reasoningTokens += message.tokens?.reasoning ?? 0;
+      usage.cacheReadTokens += message.tokens?.cache.read ?? 0;
+      usage.cacheWriteTokens += message.tokens?.cache.write ?? 0;
+      usage.cost += message.cost ?? 0;
+    }
+    usage.transcriptMessages = projectedMessages.length;
+    return usage;
+  } catch {
+    return null;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function parseModelRef(model: string): { providerID: string; modelID: string } {

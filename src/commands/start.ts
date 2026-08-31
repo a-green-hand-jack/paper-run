@@ -38,7 +38,7 @@ import { PipelineController } from "../controller/controller.js";
 import type { PipelineResult } from "../controller/controller.js";
 
 import { detectHarness } from "../harness/harness.js";
-import { isAdapterInstalled, installAdapter } from "../adapter/install.js";
+import { isAdapterInstalled, installAdapter, ensureGitignore } from "../adapter/install.js";
 
 import { getStage, stageNumber, TOTAL_STAGES } from "../pipeline/stages.js";
 import { existsSync, readFileSync } from "node:fs";
@@ -243,6 +243,8 @@ async function assertRunnable(projectDir: string): Promise<void> {
     log.step("Installing the OpenCode adapter");
     await installAdapter(projectDir);
   }
+  // Upgrade runtime ignore entries for projects initialized by older releases.
+  ensureGitignore(projectDir);
 
   await assertModelAvailable(projectDir);
 }

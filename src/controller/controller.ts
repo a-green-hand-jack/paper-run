@@ -37,6 +37,8 @@ import {
   withStateLock,
   readStageHistory,
   writeStageHistory,
+  readPerformance,
+  writePerformance,
 } from "../state/store.js";
 import {
   RunStateSchema,
@@ -78,7 +80,9 @@ import {
   abortSession,
   abortAndWaitForIdle,
   showToast,
+  getSessionUsage,
 } from "../opencode/session.js";
+import type { SessionUsageSnapshot } from "../opencode/session.js";
 import { waitForIdle } from "../opencode/events.js";
 import type { RelevantEvent } from "../opencode/events.js";
 
@@ -127,6 +131,16 @@ export interface ControllerOptions {
   signal?: AbortSignal;
 }
 
+interface TurnTelemetry {
+  sessionId: string;
+  startedAt: string;
+  completedAt: string;
+  turnMs: number;
+  validatorMs?: number;
+  usage: SessionUsageSnapshot;
+  telemetryAvailable: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Controller
 // ---------------------------------------------------------------------------
@@ -141,6 +155,7 @@ export class PipelineController {
   /** Stage associated with the turn currently being driven. */
   private currentStageId = "unknown";
   private stageTimeoutMultiplier = 1;
+  private turnTelemetry: TurnTelemetry | undefined;
 
   constructor(opts: ControllerOptions) {
     this.opts = opts;
@@ -240,7 +255,10 @@ export class PipelineController {
     let guidance: string | undefined;
 
     for (;;) {
-      if (this.aborted()) return { status: "interrupted" };
+      if (this.aborted()) {
+        this.recordPerformance(stage, {});
+        return { status: "interrupted" };
+      }
 
       const prompt =
         attempt === 0
@@ -254,6 +272,7 @@ export class PipelineController {
       try {
         await this.takeTurn(stage, prompt);
       } catch (err) {
+        this.recordPerformance(stage, {});
         if (err instanceof StageTimeoutError) {
           // A timed-out stage has no checkpoint, so leaving it pending means a
           // resume simply re-runs it.
@@ -275,16 +294,31 @@ export class PipelineController {
         throw err;
       }
 
-      if (this.aborted()) return { status: "interrupted" };
+      if (this.aborted()) {
+        this.recordPerformance(stage, {});
+        return { status: "interrupted" };
+      }
 
       const contractStop = await this.enforceLockedContracts(stage, contractBaseline);
-      if (contractStop) return contractStop;
+      if (contractStop) {
+        this.recordPerformance(stage, {});
+        return contractStop;
+      }
 
       updateRunState(this.opts.projectDir, { stage_status: "validating" });
+      const validatorStartedAt = Date.now();
       validation = await this.validateStageAttempt(stage, publicationBaseline);
-      if (this.aborted()) return { status: "interrupted" };
+      const validatorMs = Date.now() - validatorStartedAt;
+      if (this.aborted()) {
+        this.recordPerformance(stage, { validatorMs });
+        return { status: "interrupted" };
+      }
 
-      if (validation.passed) break;
+      if (validation.passed) {
+        if (this.turnTelemetry) this.turnTelemetry = { ...this.turnTelemetry, validatorMs };
+        break;
+      }
+      this.recordPerformance(stage, { validatorMs });
 
       attempt += 1;
       if (attempt > stage.retries) {
@@ -301,20 +335,28 @@ export class PipelineController {
     // --- stage-specific post-processing ---
     if (stage.id === "material_assessment") {
       const stop = await this.applyAssessment(stage, startedAt, contractBaseline);
-      if (stop) return stop;
+      if (stop) {
+        this.recordPerformance(stage, { validatorMs: this.turnTelemetry?.validatorMs });
+        return stop;
+      }
     }
 
     // --- gate ---
     const gateBoundary = await this.resolveGateBoundary(stage, contractBaseline);
-    if (gateBoundary.stop) return gateBoundary.stop;
+    if (gateBoundary.stop) {
+      this.recordPerformance(stage, { validatorMs: this.turnTelemetry?.validatorMs });
+      return gateBoundary.stop;
+    }
     const decision = await this.gate(stage, validation!, gateBoundary.resolved);
 
     if (decision.outcome === "stop") {
+      this.recordPerformance(stage, { validatorMs: this.turnTelemetry?.validatorMs });
       await this.markBlocked(stage, decision.reason);
       return { status: "stopped", reason: decision.reason };
     }
 
     if (decision.outcome === "revise") {
+      this.recordPerformance(stage, { validatorMs: this.turnTelemetry?.validatorMs });
       // The human wants changes: re-run this stage carrying their guidance.
       guidance = decision.guidance;
       log.step(`Revising "${stage.name}" per human guidance`);
@@ -323,16 +365,30 @@ export class PipelineController {
 
     // --- checkpoint ---
     const contractStop = await this.enforceLockedContracts(stage, contractBaseline);
-    if (contractStop) return contractStop;
+    if (contractStop) {
+      this.recordPerformance(stage, {});
+      return contractStop;
+    }
     if (gateBoundary.resolved.action === "await_human") {
       const mutationStop = await this.enforceNoPostGateMutation(stage);
-      if (mutationStop) return mutationStop;
+      if (mutationStop) {
+        this.recordPerformance(stage, {});
+        return mutationStop;
+      }
     }
-    const sha = await this.checkpoint(
-      stage,
-      "completed",
-      gateBoundary.resolved.action === "await_human",
-    );
+    const checkpointStartedAt = Date.now();
+    let sha: string;
+    try {
+      sha = await this.checkpoint(
+        stage,
+        "completed",
+        gateBoundary.resolved.action === "await_human",
+      );
+    } catch (error) {
+      this.recordPerformance(stage, { checkpointMs: Date.now() - checkpointStartedAt });
+      throw error;
+    }
+    this.recordPerformance(stage, { checkpointMs: Date.now() - checkpointStartedAt });
     this.recordStage(stage, {
       status: "completed",
       started_at: startedAt,
@@ -371,7 +427,9 @@ export class PipelineController {
       return { status: "stopped", reason };
     }
 
-    if (this.aborted()) return { status: "interrupted" };
+    if (this.aborted()) {
+      return { status: "interrupted" };
+    }
 
     updateRunState(this.opts.projectDir, { stage_status: "running" });
     const startedAt = new Date().toISOString();
@@ -379,6 +437,7 @@ export class PipelineController {
     try {
       await this.takeTurn(stage, this.buildStagePrompt(stage, guidance));
     } catch (err) {
+      this.recordPerformance(stage, {});
       if (err instanceof StageTimeoutError) {
         const reason = `stage timed out during revision after ${this.stageTimeoutMs(stage) / 60000}min`;
         const timeoutRecovery = await this.captureTimeoutRecovery(stage);
@@ -396,25 +455,39 @@ export class PipelineController {
     }
 
     const contractStop = await this.enforceLockedContracts(stage, contractBaseline);
-    if (contractStop) return contractStop;
+    if (contractStop) {
+      this.recordPerformance(stage, {});
+      return contractStop;
+    }
 
+    const validatorStartedAt = Date.now();
     const validation = await this.validateStageAttempt(stage, publicationBaseline);
-    if (this.aborted()) return { status: "interrupted" };
+    const validatorMs = Date.now() - validatorStartedAt;
+    if (this.aborted()) {
+      this.recordPerformance(stage, { validatorMs });
+      return { status: "interrupted" };
+    }
     if (!validation.passed) {
+      this.recordPerformance(stage, { validatorMs });
       const reason = `validation failed after revision: ${validation.failures.join("; ")}`;
       await this.markBlocked(stage, reason);
       return { status: "stopped", reason };
     }
 
     const gateBoundary = await this.resolveGateBoundary(stage, contractBaseline, true);
-    if (gateBoundary.stop) return gateBoundary.stop;
+    if (gateBoundary.stop) {
+      this.recordPerformance(stage, { validatorMs });
+      return gateBoundary.stop;
+    }
     const decision = await this.gate(stage, validation, gateBoundary.resolved);
 
     if (decision.outcome === "stop") {
+      this.recordPerformance(stage, { validatorMs });
       await this.markBlocked(stage, decision.reason);
       return { status: "stopped", reason: decision.reason };
     }
     if (decision.outcome === "revise") {
+      this.recordPerformance(stage, { validatorMs });
       return this.rerunAfterRevision(
         stage,
         decision.guidance,
@@ -425,11 +498,26 @@ export class PipelineController {
     }
 
     const contractStopBeforeCheckpoint = await this.enforceLockedContracts(stage, contractBaseline);
-    if (contractStopBeforeCheckpoint) return contractStopBeforeCheckpoint;
+    if (contractStopBeforeCheckpoint) {
+      this.recordPerformance(stage, { validatorMs });
+      return contractStopBeforeCheckpoint;
+    }
     const mutationStop = await this.enforceNoPostGateMutation(stage);
-    if (mutationStop) return mutationStop;
+    if (mutationStop) {
+      this.recordPerformance(stage, { validatorMs });
+      return mutationStop;
+    }
 
-    const sha = await this.checkpoint(stage, "completed", true);
+    if (this.turnTelemetry) this.turnTelemetry = { ...this.turnTelemetry, validatorMs };
+    const checkpointStartedAt = Date.now();
+    let sha: string;
+    try {
+      sha = await this.checkpoint(stage, "completed", true);
+    } catch (error) {
+      this.recordPerformance(stage, { checkpointMs: Date.now() - checkpointStartedAt });
+      throw error;
+    }
+    this.recordPerformance(stage, { checkpointMs: Date.now() - checkpointStartedAt });
     this.recordStage(stage, {
       status: "completed",
       started_at: startedAt,
@@ -644,6 +732,8 @@ export class PipelineController {
         })
       : this.opts.sessionId;
     this.activeSessionId = sessionId;
+    const before = await getSessionUsage(this.opts.client, sessionId);
+    const startedAt = Date.now();
 
     try {
       await sendPrompt(this.opts.client, {
@@ -676,6 +766,15 @@ export class PipelineController {
       }
       throw error;
     } finally {
+      const after = await getSessionUsage(this.opts.client, sessionId);
+      this.turnTelemetry = {
+        sessionId,
+        startedAt: new Date(startedAt).toISOString(),
+        completedAt: new Date().toISOString(),
+        turnMs: Date.now() - startedAt,
+        usage: usageDelta(before, after),
+        telemetryAvailable: before !== null && after !== null,
+      };
       this.activeSessionId = this.opts.sessionId;
     }
   }
@@ -974,6 +1073,57 @@ export class PipelineController {
     writeStageHistory(this.opts.projectDir, { ...history, stages });
   }
 
+  private recordPerformance(stage: Stage, timing: { validatorMs?: number; checkpointMs?: number }): void {
+    const turn = this.turnTelemetry;
+    if (!turn) return;
+    const state = readRunState(this.opts.projectDir);
+    let current;
+    try {
+      current = readPerformance(this.opts.projectDir);
+    } catch {
+      current = null;
+      log.warn("Ignoring unreadable performance telemetry; starting a fresh record.");
+    }
+    const performance = current ?? {
+      schema_version: "paper-run-performance-v1" as const,
+      run_id: state.run_id,
+      session_id: this.opts.sessionId,
+      started_at: turn.startedAt,
+      updated_at: turn.completedAt,
+      attempts: [],
+    };
+    performance.updated_at = new Date().toISOString();
+    performance.attempts.push({
+      stage_id: stage.id,
+      attempt: performance.attempts.filter((item) => item.stage_id === stage.id).length,
+      session_id: turn.sessionId,
+      started_at: turn.startedAt,
+      completed_at: turn.completedAt,
+      turn_ms: turn.turnMs,
+      ...(timing.validatorMs ?? turn.validatorMs) !== undefined
+        ? { validator_ms: timing.validatorMs ?? turn.validatorMs }
+        : {},
+      ...(timing.checkpointMs !== undefined ? { checkpoint_ms: timing.checkpointMs } : {}),
+      usage: {
+        model_calls: turn.usage.modelCalls,
+        input_tokens: turn.usage.inputTokens,
+        output_tokens: turn.usage.outputTokens,
+        reasoning_tokens: turn.usage.reasoningTokens,
+        cache_read_tokens: turn.usage.cacheReadTokens,
+        cache_write_tokens: turn.usage.cacheWriteTokens,
+        cost: turn.usage.cost,
+      },
+      ...(turn.usage.transcriptMessages !== undefined ? { transcript_messages: turn.usage.transcriptMessages } : {}),
+      telemetry_available: turn.telemetryAvailable,
+    });
+    try {
+      writePerformance(this.opts.projectDir, performance);
+    } catch (error) {
+      log.warn(`Could not persist performance telemetry: ${describeError(error)}`);
+    }
+    this.turnTelemetry = undefined;
+  }
+
   /** Recover the material verdict from history when resuming a run. */
   private recoverVerdict(): Verdict | undefined {
     const record = this.history().stages.find((s) => s.stage_id === "material_assessment");
@@ -1016,6 +1166,34 @@ function summarizeValidation(validation: ValidationResult): string {
     "All required checks passed. Advisory checks still reporting:",
     ...failed.map((c) => `  - ${c.name}`),
   ].join("\n");
+}
+
+function usageDelta(before: SessionUsageSnapshot | null, after: SessionUsageSnapshot | null): SessionUsageSnapshot {
+  if (before === null || after === null) {
+    return {
+      modelCalls: 0, inputTokens: 0, outputTokens: 0, reasoningTokens: 0,
+      cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0,
+      ...(after?.transcriptMessages !== undefined ? { transcriptMessages: after.transcriptMessages } : {}),
+    };
+  }
+  const current = after ?? {
+    modelCalls: 0, inputTokens: 0, outputTokens: 0, reasoningTokens: 0,
+    cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0,
+  };
+  const prior = before ?? {
+    modelCalls: 0, inputTokens: 0, outputTokens: 0, reasoningTokens: 0,
+    cacheReadTokens: 0, cacheWriteTokens: 0, cost: 0,
+  };
+  return {
+    modelCalls: Math.max(0, current.modelCalls - prior.modelCalls),
+    inputTokens: Math.max(0, current.inputTokens - prior.inputTokens),
+    outputTokens: Math.max(0, current.outputTokens - prior.outputTokens),
+    reasoningTokens: Math.max(0, current.reasoningTokens - prior.reasoningTokens),
+    cacheReadTokens: Math.max(0, current.cacheReadTokens - prior.cacheReadTokens),
+    cacheWriteTokens: Math.max(0, current.cacheWriteTokens - prior.cacheWriteTokens),
+    cost: Math.max(0, current.cost - prior.cost),
+    ...(current.transcriptMessages !== undefined ? { transcriptMessages: current.transcriptMessages } : {}),
+  };
 }
 
 /** Narrow an unknown error for reporting. */

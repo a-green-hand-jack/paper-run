@@ -13,6 +13,7 @@ import {
   abortAndWaitForIdle,
   getSessionStatus,
   showToast,
+  getSessionUsage,
 } from "../../src/opencode/session.js";
 import {
   listQuestions,
@@ -269,6 +270,50 @@ describe("sendPrompt", () => {
   it("throws on API error", async () => {
     const client = mockClient({ session: { promptAsync: vi.fn(() => fail({ m: 1 })) } });
     await expect(sendPrompt(client, { sessionId: "s", text: "t" })).rejects.toThrow(OpencodeError);
+  });
+});
+
+describe("getSessionUsage", () => {
+  it("aggregates assistant usage and counts projected context messages", async () => {
+    const client = mockClient({
+      session: {
+        messages: vi.fn(() => ok([
+            { info: { role: "user" } },
+            {
+              info: {
+                role: "assistant",
+                cost: 1.25,
+                tokens: { input: 10, output: 4, reasoning: 2, cache: { read: 8, write: 1 } },
+              },
+            },
+          ])),
+      },
+    });
+
+    await expect(getSessionUsage(client, "ses_1")).resolves.toEqual({
+      modelCalls: 1,
+      inputTokens: 10,
+      outputTokens: 4,
+      reasoningTokens: 2,
+      cacheReadTokens: 8,
+      cacheWriteTokens: 1,
+      cost: 1.25,
+      transcriptMessages: 2,
+    });
+  });
+
+  it("returns null when the messages endpoint is unavailable", async () => {
+    const client = mockClient({
+      session: { messages: vi.fn(() => fail({ message: "unsupported" })) },
+    });
+    await expect(getSessionUsage(client, "ses_1")).resolves.toBeNull();
+  });
+
+  it("returns null when the messages endpoint exceeds the telemetry timeout", async () => {
+    const client = mockClient({
+      session: { messages: vi.fn(() => new Promise(() => undefined)) },
+    });
+    await expect(getSessionUsage(client, "ses_1", { timeoutMs: 5 })).resolves.toBeNull();
   });
 });
 
