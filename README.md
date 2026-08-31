@@ -22,7 +22,7 @@ and agent-container installs. The installer requires `curl`, Node.js, and npm.
 **Prerequisites:**
 - Node.js ≥ 20
 - [OpenCode](https://opencode.ai) ≥ 1.18.25
-- Python ≥ 3.10 (for harness validation scripts)
+- Python ≥ 3.11 (for harness validation scripts)
 - Git ≥ 2.30
 - [GitHub CLI](https://cli.github.com/) (`gh`), only when creating a GitHub repository
 

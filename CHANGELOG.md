@@ -9,6 +9,7 @@ All notable changes to `paper-run` are documented here.
 - `--stage-timeout-multiplier` and `PAPER_RUN_STAGE_TIMEOUT_MULTIPLIER` for slower model gateways.
 - Run-state and checkpoint provenance for the selected timeout multiplier, including deterministic resume behavior.
 - A version-pinned, checksum-verified installer for CI, Docker, and agent containers.
+- Python 3.11 as the validated harness-script runtime.
 
 ### Fixed
 
