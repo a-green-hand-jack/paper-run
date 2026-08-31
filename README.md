@@ -1,10 +1,10 @@
 # paper-run
 
-An OpenCode-native paper writing harness for autonomous and collaborative end-to-end manuscript production.
+An OpenCode-native system for autonomous and collaborative manuscript production and independent review.
 
 ## Overview
 
-`paper-run` is a globally-installed CLI that orchestrates end-to-end paper writing by driving [OpenCode](https://opencode.ai) as the agent runtime. It works with the [agent-writing-harness](https://github.com/a-green-hand-jack/agent-writing-harness) template to provide a complete paper production pipeline.
+`paper-run` is a globally-installed CLI that orchestrates manuscript production, independent review, revision, and publication preparation by driving [OpenCode](https://opencode.ai) as the agent runtime. It works with the [agent-writing-harness](https://github.com/a-green-hand-jack/agent-writing-harness) template.
 
 Version `v0.3.0` has completed a clean 13/13 autonomous headless acceptance run on
 PaperWrite-Bench `pwb-0002`; see [issue #21](https://github.com/a-green-hand-jack/paper-run/issues/21)
@@ -71,7 +71,9 @@ paper-run start --profile build-only
 paper-run start --stages bootstrap,material_assessment,self_review,independent_review,revision
 ```
 
-Available profiles are `full`, `existing-manuscript`, `review-only`, and `build-only`.
+Available profiles are `full`, `existing-manuscript`, `review-and-revise`, `review-report`, and `build-only`.
+`review-only` remains accepted as a compatibility profile name. `review-report` is the
+strict report-only plan and contains no `revision` stage.
 `bootstrap` is always required, stages must remain in pipeline order, and a run's plan is
 fixed in `.paper-run/run.json` so resume cannot silently change its scope. Omitted stages
 are recorded as `skipped` in `.paper-run/stage-history.json`. Use `--stage` only to retry

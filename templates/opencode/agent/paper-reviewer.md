@@ -35,6 +35,11 @@ Read the manuscript in `paper/` as your primary source. Consult `PAPER.md`,
 treat them as evidence about what is *supported*, not as a substitute for what
 the paper actually says.
 
+When `.paper-run/review-source.json` exists, this is an imported standalone
+review. Read that manifest to identify the original entrypoint and imported
+file coverage. Treat every file under `paper/` as immutable, and state the files
+you actually assessed and any missing evidence under `Not assessable`.
+
 ## What to look for
 
 **Inconsistencies**
