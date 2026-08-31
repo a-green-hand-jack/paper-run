@@ -1,6 +1,10 @@
 import eslint from "@eslint/js";
 import tsParser from "@typescript-eslint/parser";
 import tsPlugin from "@typescript-eslint/eslint-plugin";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const configDirectory = dirname(fileURLToPath(import.meta.url));
 
 const nodeGlobals = {
   console: "readonly",
@@ -33,7 +37,7 @@ export default [
       parser: tsParser,
       parserOptions: {
         projectService: true,
-        tsconfigRootDir: import.meta.dirname,
+        tsconfigRootDir: configDirectory,
       },
       globals: nodeGlobals,
     },

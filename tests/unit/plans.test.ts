@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createRunPlan, PLAN_PROFILES, validateRunPlan } from "../../src/state/plans.js";
+import { createRunPlan, PLAN_PROFILES, planStages, validateRunPlan } from "../../src/state/plans.js";
 
 describe("run plans", () => {
   it("creates a profile and records omitted stages", () => {
@@ -23,5 +23,11 @@ describe("run plans", () => {
   it("rejects duplicates and out-of-order stages", () => {
     expect(() => validateRunPlan(["bootstrap", "bootstrap"])).toThrow(/duplicate/);
     expect(() => validateRunPlan(["bootstrap", "self_review", "material_assessment"])).toThrow(/order/);
+  });
+
+  it("rejects inconsistent skipped metadata", () => {
+    const plan = createRunPlan("review-only");
+    plan.skipped.pop();
+    expect(() => planStages(plan)).toThrow(/skipped-stage metadata/);
   });
 });

@@ -8,6 +8,7 @@ import { PAPER_RUN_DIR, STATE_FILES } from "../utils/constants.js";
 import { requireProjectRoot } from "../utils/paths.js";
 import { PaperRunError } from "../utils/errors.js";
 import { printKeyValues } from "../utils/logger.js";
+import { EXIT_CODES } from "../utils/errors.js";
 
 export async function validateCommand(opts: { json?: boolean } = {}): Promise<void> {
   const projectDir = requireProjectRoot();
@@ -40,6 +41,7 @@ export async function validateCommand(opts: { json?: boolean } = {}): Promise<vo
   const result = { valid: checks.every((check) => check.passed), checks, ...(publication ? { publication } : {}) };
   if (opts.json) {
     process.stdout.write(JSON.stringify(result, null, 2) + "\n");
+    if (!result.valid) process.exitCode = EXIT_CODES.BLOCKED;
   } else {
     printKeyValues(checks.map((check) => [check.name, `${check.passed ? "pass" : "fail"}: ${check.detail}`]));
     if (!result.valid) throw new PaperRunError("Project validation failed.");

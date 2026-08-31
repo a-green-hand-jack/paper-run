@@ -327,8 +327,14 @@ function validatePublicationArtifacts(
           return { passed: false, diagnostic: `[${build.name}] output declaration changed during this stage` };
         }
         const publication = readPublication(projectDir);
+        const outputDigest = `sha256:${digestFile(join(root, build.output))}`;
         const completedBeforeResume = publication?.variants.some(
-          (variant) => variant.name === build.name && variant.status === "completed",
+          (variant) =>
+            variant.name === build.name &&
+            variant.status === "completed" &&
+            variant.output === build.output &&
+            JSON.stringify(variant.command) === JSON.stringify(build.command) &&
+            variant.output_digest === outputDigest,
         ) ?? false;
         if (!completedBeforeResume && baseline[build.output] === digestFile(join(root, build.output))) {
           return { passed: false, diagnostic: `[${build.name}] output was not rebuilt during this stage` };
@@ -401,7 +407,18 @@ export async function buildPublicationArtifacts(
   publication.variants = publication.variants.filter((variant) => profile.builds.some((build) => build.name === variant.name));
   for (const build of profile.builds) {
     const known = byName.get(build.name);
-    if (known?.status === "completed" && inspectRegularFile(root, build.output) !== null) continue;
+    const artifact = inspectRegularFile(root, build.output);
+    const newestSource = newestSourceMtime(root, profile);
+    const outputDigest = artifact ? `sha256:${digestFile(join(root, build.output))}` : null;
+    if (
+      known?.status === "completed" &&
+      known.output === build.output &&
+      JSON.stringify(known.command) === JSON.stringify(build.command) &&
+      known.output_digest === outputDigest &&
+      artifact !== null &&
+      artifact.mtimeNs >= newestSource &&
+      hasBasicPdfStructure(join(root, build.output), artifact.size)
+    ) continue;
     if (options.signal?.aborted) {
       updatePublicationVariant(projectDir, publication, build.name, { status: "canceled", error: "build canceled" });
       return { passed: false, diagnostic: `[${build.name}] build canceled` };
@@ -455,7 +472,10 @@ export async function buildPublicationArtifacts(
         },
       });
       updatePublicationVariant(projectDir, publication, build.name, {
-        status: "completed", completed_at: new Date().toISOString(), error: undefined,
+        status: "completed",
+        completed_at: new Date().toISOString(),
+        error: undefined,
+        output_digest: `sha256:${digestFile(join(root, build.output))}`,
       });
     } catch (err) {
       const failure = err as { timedOut?: boolean; isCanceled?: boolean; code?: string; exitCode?: number };

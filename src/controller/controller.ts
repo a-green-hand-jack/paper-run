@@ -217,7 +217,7 @@ export class PipelineController {
       }
     }
 
-    return this.finish();
+    return this.finish(Boolean(state.plan?.stages.includes("paper_candidate")));
   }
 
 
@@ -1006,29 +1006,31 @@ export class PipelineController {
     });
   }
 
-  private async finish(): Promise<PipelineResult> {
+  private async finish(withCandidate: boolean): Promise<PipelineResult> {
     const state = readRunState(this.opts.projectDir);
 
     let tag = "";
-    try {
-      tag = await tagCandidate(state.run_id, this.opts.projectDir);
-    } catch (err) {
-      // A duplicate tag on a re-run is not worth failing the pipeline over.
-      log.warn(`Could not tag candidate: ${err instanceof Error ? err.message : String(err)}`);
+    if (withCandidate) {
+      try {
+        tag = await tagCandidate(state.run_id, this.opts.projectDir);
+      } catch (err) {
+        // A duplicate tag on a re-run is not worth failing the pipeline over.
+        log.warn(`Could not tag candidate: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
 
     updateRunState(this.opts.projectDir, { stage_status: "completed" });
 
     await showToast(this.opts.client, {
-      message: "paper-run: paper candidate ready for review",
+      message: withCandidate ? "paper-run: paper candidate ready for review" : "paper-run: selected pipeline complete",
       variant: "success",
       directory: this.opts.projectDir,
     });
 
     log.blank();
-    log.success("Paper candidate complete.");
+    log.success(withCandidate ? "Paper candidate complete." : "Selected pipeline complete.");
     if (tag) log.info(`  Tagged ${tag}`);
-    log.info("  Review the candidate before treating it as submission-ready.");
+    if (withCandidate) log.info("  Review the candidate before treating it as submission-ready.");
 
     return { status: "completed", runId: state.run_id, tag };
   }
