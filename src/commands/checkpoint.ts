@@ -190,7 +190,11 @@ function reconcileCheckpoint(
   const manual = checkpoint.trailers["Paper-Run-Kind"] === "manual";
   const terminal = !manual && (status === "completed" || status === "blocked");
   const stageStatus: RunState["stage_status"] =
-    !manual && (status === "completed" || status === "blocked" || status === "gate_waiting")
+    state.current_stage === stageId &&
+    state.stage_status === "pending" &&
+    state.error?.message.startsWith("Headless run requires approval for ")
+      ? "pending"
+      : !manual && (status === "completed" || status === "blocked" || status === "gate_waiting")
       ? status
       : "pending";
   const checkpointMode = checkpoint.trailers["Paper-Run-Mode"] as RunState["mode"];
@@ -207,7 +211,12 @@ function reconcileCheckpoint(
     stage_timeout_multiplier: checkpoint.trailers["Paper-Run-Stage-Timeout-Multiplier"]
       ? Number(checkpoint.trailers["Paper-Run-Stage-Timeout-Multiplier"])
       : state.stage_timeout_multiplier,
-    error: stageStatus === "blocked" && state.current_stage === stageId ? state.error : undefined,
+    error:
+      state.current_stage === stageId &&
+      (stageStatus === "blocked" ||
+        (stageStatus === "pending" && state.error?.message.startsWith("Headless run requires approval for ")))
+        ? state.error
+        : undefined,
   });
 }
 

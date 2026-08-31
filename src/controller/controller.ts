@@ -94,7 +94,7 @@ import { PAPER_RUN_DIR, STATE_FILES } from "../utils/constants.js";
 
 import { evaluateGate } from "./gate.js";
 import { gateActionFor, type GateDecision, type ResolvedGate } from "./gate.js";
-import { handlePermissionRequest } from "./permissions.js";
+import { commandFromPayload, handlePermissionRequest } from "./permissions.js";
 import type { PermissionAskedPayload } from "./permissions.js";
 
 // ---------------------------------------------------------------------------
@@ -138,6 +138,8 @@ export class PipelineController {
   private materialVerdict: Verdict | undefined;
   /** Session currently running a turn, so an interrupt reaches cold reviews too. */
   private activeSessionId: string;
+  /** Stage associated with the turn currently being driven. */
+  private currentStageId = "unknown";
   private stageTimeoutMultiplier = 1;
 
   constructor(opts: ControllerOptions) {
@@ -208,6 +210,7 @@ export class PipelineController {
   private async runStage(
     stage: Stage,
   ): Promise<{ status: "advanced" } | { status: "stopped"; reason: string } | { status: "interrupted" }> {
+    this.currentStageId = stage.id;
     log.step(`Stage ${stageNumber(stage.id)}/${TOTAL_STAGES}: ${stage.name}`);
 
     updateRunState(this.opts.projectDir, {
@@ -632,6 +635,7 @@ export class PipelineController {
 
   /** Send a prompt and wait for the agent to finish, answering permissions meanwhile. */
   private async takeTurn(stage: Stage, prompt: string): Promise<void> {
+    this.currentStageId = stage.id;
     const review = stage.id === "independent_review";
     const sessionId = review
       ? await createSession(this.opts.client, {
@@ -690,13 +694,26 @@ export class PipelineController {
       directory: this.opts.projectDir,
     });
     if (!approved && this.opts.unattended) {
-      updateRunState(this.opts.projectDir, { stage_status: "pending" });
+      const command = commandFromPayload(payload);
+      const patterns = Array.isArray(payload.patterns) ? JSON.stringify(payload.patterns) : "<unavailable>";
       const childSessionId = payload.sessionID && payload.sessionID !== this.activeSessionId
         ? payload.sessionID
         : undefined;
       const source = childSessionId
         ? " requested by a child session"
         : "";
+      const diagnostic = [
+        `Headless run requires approval for the ${payload.permission} permission${source}.`,
+        `Stage: ${this.currentStageId}`,
+        `Session: ${payload.sessionID || "<unknown>"}`,
+        `Request: ${payload.id || "<unknown>"}`,
+        `Command: ${JSON.stringify(command || "<unavailable>")}`,
+        `Patterns: ${patterns}`,
+      ].join("\n");
+      updateRunState(this.opts.projectDir, {
+        stage_status: "pending",
+        error: { stage: this.currentStageId, message: diagnostic, at: new Date().toISOString() },
+      });
       const sessions = childSessionId
         ? [childSessionId, this.activeSessionId]
         : [this.activeSessionId];
@@ -708,7 +725,7 @@ export class PipelineController {
         }
       }
       throw new PaperRunError(
-        `Headless run requires approval for the ${payload.permission} permission${source}.`,
+        diagnostic,
         { hint: "Add a narrow project permission rule, or rerun without --headless and approve it in the TUI." },
       );
     }
