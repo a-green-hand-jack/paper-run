@@ -28,6 +28,7 @@
 
 import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 import { isDeepStrictEqual } from "node:util";
+import { existsSync, readFileSync } from "node:fs";
 import { execa } from "execa";
 
 import {
@@ -96,6 +97,7 @@ import {
 import { StageTimeoutError, PaperRunError } from "../utils/errors.js";
 import { log } from "../utils/logger.js";
 import { PAPER_RUN_DIR, STATE_FILES } from "../utils/constants.js";
+import { assertReviewTreeUnchanged } from "../utils/review-integrity.js";
 
 import { evaluateGate } from "./gate.js";
 import { gateActionFor, type GateDecision, type ResolvedGate } from "./gate.js";
@@ -968,6 +970,31 @@ export class PipelineController {
     postHumanGate = false,
   ): Promise<string> {
     const state = readRunState(this.opts.projectDir);
+    const manifestPath = `${this.opts.projectDir}/${PAPER_RUN_DIR}/review-source.json`;
+
+    if (state.plan?.profile === "review-report") {
+      try {
+        const { stdout: headManifest } = await execa(
+          "git",
+          ["show", `HEAD:${PAPER_RUN_DIR}/review-source.json`],
+          { cwd: this.opts.projectDir },
+        );
+        if (!existsSync(manifestPath)) {
+          throw new PaperRunError("Standalone review source manifest is missing.");
+        }
+        if (readFileSync(manifestPath, "utf-8") !== headManifest) {
+          throw new PaperRunError("Standalone review source manifest changed; review metadata is immutable.");
+        }
+        const manifest = JSON.parse(headManifest) as { paperDigest?: unknown };
+        if (typeof manifest.paperDigest !== "string") {
+          throw new PaperRunError("Standalone review source manifest has no paper digest.");
+        }
+        assertReviewTreeUnchanged(this.opts.projectDir, manifest.paperDigest);
+      } catch (error) {
+        if (error instanceof PaperRunError) throw error;
+        // Existing report-only projects have no imported-source manifest.
+      }
+    }
 
     return commitCheckpoint(
       {
@@ -1008,6 +1035,19 @@ export class PipelineController {
 
   private async finish(withCandidate: boolean): Promise<PipelineResult> {
     const state = readRunState(this.opts.projectDir);
+
+    if (state.plan?.profile === "review-report") {
+      updateRunState(this.opts.projectDir, { stage_status: "completed" });
+      await showToast(this.opts.client, {
+        message: "paper-run: independent review report ready",
+        variant: "success",
+        directory: this.opts.projectDir,
+      });
+      log.blank();
+      log.success("Independent review complete.");
+      log.info(`  Report: ${PAPER_RUN_DIR}/review-findings.md`);
+      return { status: "completed", runId: state.run_id, tag: "" };
+    }
 
     let tag = "";
     if (withCandidate) {

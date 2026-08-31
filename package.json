@@ -1,7 +1,7 @@
 {
   "name": "paper-run",
   "version": "0.4.0",
-  "description": "An OpenCode-native paper writing harness for autonomous and collaborative end-to-end manuscript production",
+  "description": "An OpenCode-native system for autonomous and collaborative manuscript production and independent review",
   "type": "module",
   "bin": {
     "paper-run": "./dist/cli.js"
@@ -45,6 +45,7 @@
     "opencode",
     "paper",
     "writing",
+    "review",
     "latex",
     "research",
     "agent",

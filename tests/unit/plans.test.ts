@@ -9,6 +9,12 @@ describe("run plans", () => {
     expect(plan.skipped.map((item) => item.stage)).toContain("canonical_drafting");
   });
 
+  it("provides a strict report-only profile without revision", () => {
+    const plan = createRunPlan("review-report");
+    expect(plan.stages).toEqual(["bootstrap", "independent_review"]);
+    expect(plan.stages).not.toContain("revision");
+  });
+
   it("accepts ordered custom plans", () => {
     expect(createRunPlan("full", "bootstrap,material_assessment,self_review,independent_review,revision").profile)
       .toBe("custom");

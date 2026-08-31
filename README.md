@@ -1,10 +1,10 @@
 # paper-run
 
-An OpenCode-native paper writing harness for autonomous and collaborative end-to-end manuscript production.
+An OpenCode-native system for autonomous and collaborative manuscript production and independent review.
 
 ## Overview
 
-`paper-run` is a globally-installed CLI that orchestrates end-to-end paper writing by driving [OpenCode](https://opencode.ai) as the agent runtime. It works with the [agent-writing-harness](https://github.com/a-green-hand-jack/agent-writing-harness) template to provide a complete paper production pipeline.
+`paper-run` is a globally-installed CLI that orchestrates manuscript production, independent review, revision, and publication preparation by driving [OpenCode](https://opencode.ai) as the agent runtime. It works with the [agent-writing-harness](https://github.com/a-green-hand-jack/agent-writing-harness) template.
 
 Version `v0.4.0` builds on the clean 13/13 autonomous headless acceptance run on
 PaperWrite-Bench `pwb-0002`; see [issue #21](https://github.com/a-green-hand-jack/paper-run/issues/21)
@@ -50,6 +50,8 @@ paper-run init ~/papers/my-paper --brief ~/briefs/my-paper.md \
 
 ```bash
 paper-run init [directory]    # Create a new writing repo from the harness template
+paper-run transfer <source>   # Adopt an external TeX repo into a new production workspace
+paper-run review <source>     # Review an external TeX repo without revising it
 paper-run [start]             # Launch OpenCode TUI and start the pipeline
 paper-run start --headless --mode autonomous \
   --model openai/gpt-5.6-sol --variant high \
@@ -71,11 +73,39 @@ paper-run start --profile build-only
 paper-run start --stages bootstrap,material_assessment,self_review,independent_review,revision
 ```
 
-Available profiles are `full`, `existing-manuscript`, `review-only`, and `build-only`.
+Available profiles are `full`, `existing-manuscript`, `review-and-revise`, `review-report`, and `build-only`.
+`review-only` remains accepted as a compatibility profile name. `review-report` is the
+strict report-only plan and contains no `revision` stage.
 `bootstrap` is always required, stages must remain in pipeline order, and a run's plan is
 fixed in `.paper-run/run.json` so resume cannot silently change its scope. Omitted stages
 are recorded as `skipped` in `.paper-run/stage-history.json`. Use `--stage` only to retry
 a stage already included in the fixed plan.
+
+### External TeX repositories
+
+Use `transfer` (or its `adopt` alias) when the manuscript should continue through
+paper-run's production workflow:
+
+```bash
+paper-run transfer ~/papers/existing-paper --output ~/papers/existing-paper-adopted
+cd ~/papers/existing-paper-adopted
+paper-run start
+```
+
+Transfer detects the TeX entrypoint and source graph, copies the repository into
+an isolated harness workspace, extracts verifiable title, author, abstract,
+bibliography, figure, table, style, build, and evidence metadata, and records
+unknown decisions as unresolved. The source repository is never modified.
+
+Use `review` for a findings-only cold review:
+
+```bash
+paper-run review ~/papers/existing-paper --mode autonomous --headless
+```
+
+The review workspace runs the `review-report` plan, writes
+`.paper-run/review-findings.md`, verifies the imported `paper/` digest before
+checkpointing, and never enters `revision`.
 
 For long-running CI or Harbor jobs, preserve the writing repository, its run branch,
 `.paper-run/`, and generated `paper/` artifacts between attempts. Run `paper-run resume`

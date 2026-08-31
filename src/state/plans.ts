@@ -15,6 +15,14 @@ export const PLAN_PROFILES: Readonly<Record<string, readonly StageId[]>> = {
     "publication_build",
     "paper_candidate",
   ],
+  "review-and-revise": [
+    "bootstrap",
+    "material_assessment",
+    "self_review",
+    "independent_review",
+    "revision",
+  ],
+  // Compatibility alias for runs created before the profile was renamed.
   "review-only": [
     "bootstrap",
     "material_assessment",
@@ -22,6 +30,7 @@ export const PLAN_PROFILES: Readonly<Record<string, readonly StageId[]>> = {
     "independent_review",
     "revision",
   ],
+  "review-report": ["bootstrap", "independent_review"],
   "build-only": ["bootstrap", "publication_build"],
 };
 
