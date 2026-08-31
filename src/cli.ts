@@ -16,6 +16,7 @@ import { checkpointCommand } from "./commands/checkpoint.js";
 import { approveCommand } from "./commands/approve.js";
 import { validateCommand, publicationStatusCommand } from "./commands/diagnostics.js";
 import { reviewCommand } from "./commands/review.js";
+import { transferCommand } from "./commands/transfer.js";
 
 const program = new Command()
   .name("paper-run")
@@ -77,6 +78,19 @@ program
   .option("--stage-timeout-multiplier <number>", "multiply review stage timeouts")
   .action(async (source: string, opts) => {
     await reviewCommand(source, opts);
+  });
+
+program
+  .command("transfer <source>")
+  .alias("adopt")
+  .description("Adopt an external TeX repository into a new paper-run workspace")
+  .option("--output <directory>", "adopted workspace (default: <source>-adopted)")
+  .option("--entry <path>", "main TeX file relative to the source directory")
+  .option("--mode <mode>", "operating mode (autonomous|collaborative)", "collaborative")
+  .option("--template <version>", "harness template version", "v0.3.0")
+  .option("--model <model>", "model for the OpenCode adapter")
+  .action(async (source: string, opts) => {
+    await transferCommand(source, opts);
   });
 
 // --- status ---

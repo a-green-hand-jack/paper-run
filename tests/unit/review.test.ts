@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { detectEntrypoint, inspectReviewSource } from "../../src/commands/review.js";
+import { detectEntrypoint, extractManuscriptMetadata, inspectReviewSource } from "../../src/commands/review.js";
 
 describe("external review source inspection", () => {
   let root = "";
@@ -41,5 +41,31 @@ describe("external review source inspection", () => {
   it("rejects an entrypoint outside the source directory", () => {
     root = mkdtempSync(join(tmpdir(), "paper-run-review-"));
     expect(() => detectEntrypoint(root, "../main.tex")).toThrow(/outside/);
+  });
+
+  it("extracts verifiable metadata without inventing unresolved fields", () => {
+    root = mkdtempSync(join(tmpdir(), "paper-run-review-"));
+    writeFileSync(
+      join(root, "main.tex"),
+      "\\documentclass{article}\n\\title{A \u005c\u005c Robust Result}\n\\author{Ada Lovelace \\and Alan Turing}\n\\begin{abstract}A tested result.\\end{abstract}\n",
+    );
+    writeFileSync(join(root, "README.md"), "Build with latexmk.");
+
+    const metadata = extractManuscriptMetadata(root, {
+      entrypoint: "main.tex",
+      sourceGraph: ["main.tex"],
+      bibliography: [],
+      figures: [],
+      tables: [],
+      styles: [],
+      buildFiles: [],
+      evidenceFiles: [],
+      missingSourceFiles: [],
+    });
+
+    expect(metadata.title).toContain("Robust Result");
+    expect(metadata.authors).toEqual(["Ada Lovelace", "Alan Turing"]);
+    expect(metadata.abstract).toBe("A tested result.");
+    expect(metadata.readme).toBe("Build with latexmk.");
   });
 });

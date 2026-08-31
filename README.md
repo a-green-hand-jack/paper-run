@@ -50,6 +50,8 @@ paper-run init ~/papers/my-paper --brief ~/briefs/my-paper.md \
 
 ```bash
 paper-run init [directory]    # Create a new writing repo from the harness template
+paper-run transfer <source>   # Adopt an external TeX repo into a new production workspace
+paper-run review <source>     # Review an external TeX repo without revising it
 paper-run [start]             # Launch OpenCode TUI and start the pipeline
 paper-run start --headless --mode autonomous \
   --model openai/gpt-5.6-sol --variant high \
@@ -78,6 +80,32 @@ strict report-only plan and contains no `revision` stage.
 fixed in `.paper-run/run.json` so resume cannot silently change its scope. Omitted stages
 are recorded as `skipped` in `.paper-run/stage-history.json`. Use `--stage` only to retry
 a stage already included in the fixed plan.
+
+### External TeX repositories
+
+Use `transfer` (or its `adopt` alias) when the manuscript should continue through
+paper-run's production workflow:
+
+```bash
+paper-run transfer ~/papers/existing-paper --output ~/papers/existing-paper-adopted
+cd ~/papers/existing-paper-adopted
+paper-run start
+```
+
+Transfer detects the TeX entrypoint and source graph, copies the repository into
+an isolated harness workspace, extracts verifiable title, author, abstract,
+bibliography, figure, table, style, build, and evidence metadata, and records
+unknown decisions as unresolved. The source repository is never modified.
+
+Use `review` for a findings-only cold review:
+
+```bash
+paper-run review ~/papers/existing-paper --mode autonomous --headless
+```
+
+The review workspace runs the `review-report` plan, writes
+`.paper-run/review-findings.md`, verifies the imported `paper/` digest before
+checkpointing, and never enters `revision`.
 
 For long-running CI or Harbor jobs, preserve the writing repository, its run branch,
 `.paper-run/`, and generated `paper/` artifacts between attempts. Run `paper-run resume`

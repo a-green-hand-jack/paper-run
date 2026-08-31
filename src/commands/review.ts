@@ -45,6 +45,8 @@ export interface ReviewWorkspaceResult {
   files: string[];
 }
 
+export type ImportedWorkspacePurpose = "review" | "adoption";
+
 export interface ReviewSourceInspection {
   entrypoint: string;
   sourceGraph: string[];
@@ -54,6 +56,7 @@ export interface ReviewSourceInspection {
   styles: string[];
   buildFiles: string[];
   evidenceFiles: string[];
+  missingSourceFiles: Array<{ from: string; requested: string }>;
 }
 
 export async function reviewCommand(source: string, opts: ReviewOptions): Promise<void> {
@@ -87,9 +90,17 @@ export async function prepareReviewWorkspace(
   source: string,
   opts: Pick<ReviewOptions, "output" | "entry" | "mode" | "template" | "model"> = {},
 ): Promise<ReviewWorkspaceResult> {
+  return prepareImportedWorkspace(source, opts, "review");
+}
+
+export async function prepareImportedWorkspace(
+  source: string,
+  opts: Pick<ReviewOptions, "output" | "entry" | "mode" | "template" | "model">,
+  purpose: ImportedWorkspacePurpose,
+): Promise<ReviewWorkspaceResult> {
   const sourceDir = resolve(source);
   assertSourceDirectory(sourceDir);
-  const workspace = resolve(opts.output ?? `${sourceDir}-review`);
+  const workspace = resolve(opts.output ?? `${sourceDir}-${purpose === "review" ? "review" : "adopted"}`);
   assertWorkspaceUsable(sourceDir, workspace);
   const mode = parseMode(opts.mode ?? "collaborative");
   const version = opts.template ?? DEFAULT_TEMPLATE_VERSION;
@@ -112,8 +123,20 @@ export async function prepareReviewWorkspace(
       files.push("main.tex");
     }
     const inspection = inspectReviewSource(sourceDir, relativeEntry, files);
-    writeReviewContext(workspace, basenamePosix(toPosix(sourceDir)), inspection, files, reviewTreeDigest(workspace));
-    await initializeReviewRepository(workspace, version, mode, opts.model);
+    if (purpose === "review") {
+      writeReviewContext(workspace, basenamePosix(toPosix(sourceDir)), inspection, files, reviewTreeDigest(workspace), mode);
+    } else {
+      writeAdoptionContext(workspace, sourceDir, inspection, files, mode);
+      replaceModeInContracts(workspace, mode);
+      writeExternalBuildProfile(workspace, inspection);
+    }
+    await initializeImportedRepository(
+      workspace,
+      version,
+      mode,
+      opts.model,
+      purpose === "review" ? "review-report" : "existing-manuscript",
+    );
     return { workspace, entrypoint: relativeEntry, files: files.sort() };
   } catch (error) {
     if (createdWorkspace && existsSync(workspace)) rmSync(workspace, { recursive: true, force: true });
@@ -130,7 +153,9 @@ function assertSourceDirectory(sourceDir: string): void {
 function assertWorkspaceUsable(sourceDir: string, workspace: string): void {
   const sourceReal = realpathSync(sourceDir);
   const workspacePath = resolve(workspace);
-  if (workspacePath === sourceReal || workspacePath.startsWith(`${sourceReal}${sep}`)) {
+  const parentReal = realpathSync(nearestExistingParent(workspacePath));
+  const canonicalWorkspace = join(parentReal, relative(nearestExistingParent(workspacePath), workspacePath));
+  if (canonicalWorkspace === sourceReal || canonicalWorkspace.startsWith(`${sourceReal}${sep}`)) {
     throw new PaperRunError("The review workspace must be outside the source repository.");
   }
   if (existsSync(workspace) && lstatSync(workspace).isSymbolicLink()) {
@@ -145,6 +170,16 @@ function assertWorkspaceUsable(sourceDir: string, workspace: string): void {
   if (existsSync(workspace) && !isEmptyDir(workspace)) {
     throw new PaperRunError(`Review workspace is not empty: ${workspace}`, { hint: "Choose an empty or absent directory with --output." });
   }
+}
+
+function nearestExistingParent(path: string): string {
+  let current = path;
+  while (!existsSync(current)) {
+    const parent = resolve(current, "..");
+    if (parent === current) break;
+    current = parent;
+  }
+  return current;
 }
 
 export function detectEntrypoint(sourceDir: string, requested?: string): string {
@@ -173,6 +208,7 @@ export function inspectReviewSource(
 ): ReviewSourceInspection {
   const fileSet = new Set(files);
   const sourceGraph: string[] = [];
+  const missingSourceFiles: Array<{ from: string; requested: string }> = [];
   const visited = new Set<string>();
 
   const visit = (file: string) => {
@@ -184,7 +220,8 @@ export function inspectReviewSource(
     for (const match of content.matchAll(/\\(?:input|include|subfile)\s*\{([^}]+)\}/g)) {
       const raw = match[1]!.trim();
       const candidate = toPosix(join(directory, raw.endsWith(".tex") ? raw : `${raw}.tex`));
-      visit(candidate);
+      if (!fileSet.has(candidate)) missingSourceFiles.push({ from: file, requested: candidate });
+      else visit(candidate);
     }
   };
   visit(entrypoint);
@@ -199,6 +236,7 @@ export function inspectReviewSource(
     styles: byExtension([".sty", ".cls", ".bst"]),
     buildFiles: files.filter((file) => /(^|\/)(makefile|latexmkrc|tectonic\.toml|\.github\/workflows\/[^/]+)$/i.test(file)),
     evidenceFiles: files.filter((file) => /(^|\/)(experiments?|results?|evaluation|eval)(\/|$)/i.test(file) || /(^|\/)(experiments?|results?)\.(md|json|csv|tsv)$/i.test(file)),
+    missingSourceFiles,
   };
 }
 
@@ -250,16 +288,105 @@ function writeReviewContext(
   inspection: ReviewSourceInspection,
   files: string[],
   paperDigest: string,
+  mode: Mode,
 ): void {
   ensurePaperRunDir(workspace);
-  writeFileSync(join(workspace, PAPER_RUN_DIR, "review-source.json"), `${JSON.stringify({ schema_version: "paper-run-review-source-v1", source, ...inspection, paperDigest, imported_at: new Date().toISOString(), files: files.sort() }, null, 2)}\n`);
-  writeFileSync(join(workspace, "BRIEF.md"), `# Independent manuscript review\n\n## Objective\n\nReview the imported manuscript without editing it.\n\n## Source\n\n- Entrypoint: \`paper/${inspection.entrypoint}\`\n- TeX source graph: ${inspection.sourceGraph.length} file(s)\n- Imported files: ${files.length}\n- Evidence coverage: only files copied into \`paper/\` are available; missing experimental records or external references must be reported as not assessable.\n`);
-  writeFileSync(join(workspace, "PAPER.md"), `# Paper\n\n## Paper identity\n\nImported manuscript; identity is not normalized automatically.\n\n## What readers should believe\n\nThe reviewer must assess only claims stated in the imported manuscript.\n\n## Unresolved\n\n- External paper contracts were not available during transfer.\n- See .paper-run/review-source.json for the detected source graph and coverage.\n`);
-  writeFileSync(join(workspace, "EXPERIMENTS.md"), `# Experiments\n\n## Experiment overview\n\nImported experiment/evaluation files are listed in .paper-run/review-source.json.\n\n## Claim-evidence bindings\n\nNot normalized during report-only transfer; assess the imported manuscript and available files directly.\n`);
+  writeFileSync(join(workspace, PAPER_RUN_DIR, "review-source.json"), `${JSON.stringify({ schema_version: "paper-run-review-source-v1", source, ...inspection, paperDigest, mode, imported_at: new Date().toISOString(), files: files.sort() }, null, 2)}\n`);
+  writeFileSync(join(workspace, "BRIEF.md"), `# Independent manuscript review\n\n## Objective\n\nReview the imported manuscript without editing it.\n\n## Source\n\n- Entrypoint: \`paper/${inspection.entrypoint}\`\n- TeX source graph: ${inspection.sourceGraph.length} file(s)\n- Imported files: ${files.length}\n- Mode: ${mode}\n- Missing source inputs: ${inspection.missingSourceFiles.length > 0 ? inspection.missingSourceFiles.map((item) => `\`${item.from}\` -> \`${item.requested}\``).join(", ") : "None detected."}\n- Evidence coverage: only files copied into \`paper/\` are available; missing experimental records or external references must be reported as not assessable.\n`);
+  writeFileSync(join(workspace, "PAPER.md"), completeReviewPaperContract(inspection));
+  writeFileSync(join(workspace, "EXPERIMENTS.md"), completeReviewExperimentsContract(inspection));
   writeFileSync(join(workspace, "REFERENCES.md"), `# References\n\n## Imported bibliography\n\nBibliography files are listed in .paper-run/review-source.json.\n`);
+  replaceModeInContracts(workspace, mode);
 }
 
-async function initializeReviewRepository(workspace: string, version: string, mode: Mode, model?: string): Promise<void> {
+function completeReviewPaperContract(inspection: ReviewSourceInspection): string {
+  return `# Paper Contract\n\nImported manuscript review contract. The imported TeX under paper/ is the primary scientific source.\n\n## Collaboration cues\n\n- **locked** means the reviewer must not change the manuscript or its meaning.\n- **bounded** means analysis stays within the imported files.\n- **free** applies only to the review report.\n- **unresolved** means the source does not provide enough evidence to assess the item.\n\n## Paper identity\n\n- Working title: Imported manuscript; verify from paper/${inspection.entrypoint}\n- Target venue: unresolved\n- Paper type: unresolved\n- Intended readers: unresolved\n- One-sentence positioning: unresolved\n\n## Operating mode\n\n- Mode: collaborative\n- Collaboration: bounded\n\n## What readers should believe\n\n### Central thesis\n\nAssess only claims stated in the imported manuscript.\n\n### Contributions\n\nUnresolved; identify only contributions supported by the imported source.\n\n## What must not change silently\n\n- The imported manuscript source and its scientific meaning.\n\n## What may evolve\n\n- Review report wording and organization only.\n\n## Unresolved\n\n- External paper contracts were not available during transfer.\n- See .paper-run/review-source.json for source graph and coverage.\n\n## Story and structure\n\n### Narrative arc\n\nUnresolved; source graph contains ${inspection.sourceGraph.length} file(s).\n\n### Section responsibilities\n\nAssess the responsibilities expressed by the imported manuscript.\n\n## Writing style\n\n### Current style\n\nUnresolved; evaluate the imported manuscript as written.\n\n## Human decisions required\n\n- Any correction, revision, claim change, or evidence addition.\n`;
+}
+
+function completeReviewExperimentsContract(inspection: ReviewSourceInspection): string {
+  return `# Experiment Contract\n\nThis contract records imported evidence coverage for review only.\n\n## Experiment overview\n\n${inspection.evidenceFiles.length > 0 ? inspection.evidenceFiles.map((file) => `- Imported evidence surface: \`paper/${file}\``).join("\n") : "No separate experiment or result files were detected; manuscript-only evidence remains unresolved."}\n\n## Evidence-question template\n\nNo normalized evidence question was created during report-only transfer.\n\n## Result interpretation\n\nResults must be assessed only when the imported manuscript and supplied evidence define the measurement, conditions, aggregation, uncertainty, and limits of interpretation.\n\n## Relationship to the code repository\n\nNo code repository relationship was inferred during report-only transfer.\n\n## Claim-evidence bindings\n\nNot normalized during report-only transfer; assess the imported manuscript and available files directly.\n`;
+}
+
+function writeAdoptionContext(
+  workspace: string,
+  sourceDir: string,
+  inspection: ReviewSourceInspection,
+  files: string[],
+  mode: Mode,
+): void {
+  const metadata = extractManuscriptMetadata(sourceDir, inspection);
+  ensurePaperRunDir(workspace);
+  writeFileSync(
+    join(workspace, PAPER_RUN_DIR, "transfer-source.json"),
+    `${JSON.stringify({
+      schema_version: "paper-run-transfer-source-v1",
+      source: basenamePosix(toPosix(sourceDir)),
+      ...inspection,
+      metadata,
+      imported_at: new Date().toISOString(),
+      files: files.sort(),
+    }, null, 2)}\n`,
+  );
+
+  const title = metadata.title ?? "Unresolved imported manuscript title";
+  const thesis = metadata.abstract ?? "Unresolved; derive the central thesis from the imported manuscript before changing it.";
+  const authors = metadata.authors.length > 0 ? metadata.authors.join(", ") : "Unresolved";
+  writeFileSync(join(workspace, "PAPER.md"), `# Paper Contract\n\nThis contract was generated from verifiable imported manuscript metadata.\n\n## Collaboration cues\n\n- **locked** means the imported manuscript and scientific meaning must not change silently.\n- **bounded** means work stays within the documented evidence.\n- **free** applies to low-risk wording and organization.\n- **unresolved** means a Human decision or source evidence is missing.\n\n## Paper identity\n\n- Working title: ${title}\n- Target venue: Unresolved\n- Paper type: Imported existing manuscript\n- Intended readers: Unresolved\n- One-sentence positioning: Unresolved\n\n## What readers should believe\n\n### Central thesis\n\n${thesis}\n\n### Contributions\n\n- Unresolved; validate contributions against \`paper/${inspection.entrypoint}\`.\n\n## Authors and identity\n\n${authors}\n\n## Operating mode\n\n- Mode: collaborative\n- Collaboration: bounded\n\n## What must not change silently\n\nThe imported manuscript source and claims derived from it.\n\n## What may evolve\n\nPositioning, structure, prose, and unresolved metadata after evidence-based review.\n\n## Unresolved\n\n- Confirm title, venue, contributions, authorship, and target constraints.\n- Reconcile generated contracts with the imported manuscript before revision.\n\n## Story and structure\n\n### Narrative arc\n\nThe imported TeX source graph contains ${inspection.sourceGraph.length} file(s):\n${inspection.sourceGraph.map((file) => `- \`paper/${file}\``).join("\n")}\n\n### Section responsibilities\n\nUnresolved; derive from the imported manuscript before revision.\n\n## Writing style\n\n### Current style\n\nUnresolved; preserve the imported manuscript's style until reviewed.\n\n## Human decisions required\n\n- Central contributions and claims.\n- Target venue, primary metrics, baselines, and interpretation.\n- Any changes to the imported scientific meaning.\n`);
+  writeFileSync(join(workspace, "BRIEF.md"), `# Imported Manuscript Brief\n\n## Paper identity\n\n${title}\n\n## What readers should believe\n\n${thesis}\n\n## Operating mode\n\n- Mode: collaborative\n\n## Evidence and materials\n\n- Entrypoint: \`paper/${inspection.entrypoint}\`\n- Bibliography files: ${formatPaths(inspection.bibliography)}\n- Evidence files: ${formatPaths(inspection.evidenceFiles)}\n- Figures: ${formatPaths(inspection.figures)}\n- Tables: ${formatPaths(inspection.tables)}\n\n## What must not change silently\n\nThe imported manuscript and any claims or results extracted from it.\n\n## What may evolve\n\nPositioning, structure, prose, and unresolved metadata after evidence-based review.\n\n## Target and delivery\n\nUnresolved.\n\n## Authors and identity\n\n${authors}\n\n## Constraints\n\nUnresolved.\n\n## First deliverable\n\nAssess and reconcile the imported manuscript contracts before revision.\n\n## Template usage note\n\nAdopted from an external TeX repository by paper-run transfer.\n`);
+  writeFileSync(join(workspace, "EXPERIMENTS.md"), `# Experiment Contract\n\nThis contract maps imported evidence surfaces without inventing results.\n\n## Experiment overview\n\n${inspection.evidenceFiles.length > 0 ? inspection.evidenceFiles.map((file) => `- Imported evidence surface: \`paper/${file}\``).join("\n") : "No separate experiment or result files were detected; manuscript-only evidence remains unresolved."}\n\n## Claim-evidence bindings\n\nUnresolved. Bind manuscript claims to imported evidence before revision.\n\n## Result interpretation\n\nUnresolved. Record measurement, conditions, aggregation, uncertainty, supported interpretation, and limitations before changing claims.\n\n## Relationship to the code repository\n\nNo code repository relationship was inferred. Imported evidence surfaces remain under \`paper/\`.\n\n## Figures and tables\n\n### Figures\n\n${formatPaths(inspection.figures)}\n\n### Tables\n\n${formatPaths(inspection.tables)}\n`);
+  writeFileSync(join(workspace, "REFERENCES.md"), `# References\n\n## Imported bibliography\n\n${formatPaths(inspection.bibliography)}\n\n## Coverage\n\nCitation correctness and bibliography completeness remain unresolved until reviewed against the imported manuscript.\n`);
+  writeFileSync(join(workspace, "PUBLICATION.md"), `# Publication Contract\n\nThis contract preserves imported build information while publication decisions remain unresolved.\n\n## Canonical paper\n\n\`paper/\` contains the imported authored source.\n\n## Active variants\n\nOnly the imported source variant is active; additional variants are unresolved.\n\n## Allowed differences\n\nLow-risk publication presentation only after Human review.\n\n## Must not diverge silently\n\nClaims, results, experiment interpretation, terminology, limitations, and canonical section content.\n\n## Human review triggers\n\nAny venue, identity, appendix, build, or publication variant decision.\n\n## Build interface\n\nImported build surfaces: ${formatPaths(inspection.buildFiles)}\n\nExisting style files: ${formatPaths(inspection.styles)}\n\n## Release instances\n\nNone. Release identity and delivery targets remain unresolved.\n`);
+  replaceModeInContracts(workspace, mode);
+}
+
+function replaceModeInContracts(workspace: string, mode: Mode): void {
+  for (const file of ["PAPER.md", "BRIEF.md"]) {
+    const path = join(workspace, file);
+    writeFileSync(path, readFileSync(path, "utf-8").replaceAll("Mode: collaborative", `Mode: ${mode}`));
+  }
+}
+
+function writeExternalBuildProfile(workspace: string, inspection: ReviewSourceInspection): void {
+  const command = inspection.buildFiles.some((file) => /makefile/i.test(file))
+    ? ["make", "pdf"]
+    : ["latexmk", "-pdf", "-interaction=nonstopmode", `paper/${inspection.entrypoint}`];
+  writeFileSync(join(workspace, ".agents", "paper-build.json"), `${JSON.stringify({
+    schema_version: "paper-build-profile-v1",
+    bibliography: inspection.bibliography.find((file) => file.endsWith(".bib")) ? `paper/${inspection.bibliography.find((file) => file.endsWith(".bib"))}` : undefined,
+    builds: [{ name: "imported", command, output: "paper/main.pdf" }],
+    entrypoint: `paper/${inspection.entrypoint}`,
+    layout: "external-latex",
+    source_root: "paper",
+  }, null, 2)}\n`);
+}
+
+export function extractManuscriptMetadata(
+  sourceDir: string,
+  inspection: ReviewSourceInspection,
+): { title?: string; authors: string[]; abstract?: string; readme?: string } {
+  const content = inspection.sourceGraph
+    .map((file) => stripTexComments(readFileSync(join(sourceDir, file), "utf-8")))
+    .join("\n");
+  const title = extractTexArgument(content, "title");
+  const author = extractTexArgument(content, "author");
+  const abstract = /\\begin\{abstract\}([\s\S]*?)\\end\{abstract\}/m.exec(content)?.[1]?.replace(/\s+/g, " ").trim();
+  const readmePath = ["README.md", "readme.md", "README.txt"].find((file) => existsSync(join(sourceDir, file)));
+  const readme = readmePath ? readFileSync(join(sourceDir, readmePath), "utf-8").slice(0, 4_000).trim() : undefined;
+  return {
+    ...(title ? { title: title.replace(/\s+/g, " ").trim() } : {}),
+    authors: author ? author.split(/\\and|,|;/).map((item) => item.replace(/\\[a-zA-Z]+\*?(?:\[[^\]]*\])?\{([^}]*)\}/g, "$1").trim()).filter(Boolean) : [],
+    ...(abstract ? { abstract } : {}),
+    ...(readme ? { readme } : {}),
+  };
+}
+
+async function initializeImportedRepository(
+  workspace: string,
+  version: string,
+  mode: Mode,
+  model: string | undefined,
+  profile: "review-report" | "existing-manuscript",
+): Promise<void> {
   await execa("git", ["init"], { cwd: workspace });
   await execa("git", ["add", "-A"], { cwd: workspace });
   await execa("git", ["commit", "-m", "Initialize isolated manuscript review workspace"], { cwd: workspace });
@@ -267,7 +394,7 @@ async function initializeReviewRepository(workspace: string, version: string, mo
   const runId = generateRunId();
   const branch = `${GIT.runBranchPrefix}${runId}`;
   const now = new Date().toISOString();
-  const plan = createRunPlan("review-report");
+  const plan = createRunPlan(profile);
   const state: RunState = { schema_version: "paper-run-v1", run_id: runId, run_branch: branch, mode, current_stage: "bootstrap", stage_status: "completed", started_at: now, updated_at: now, template_version: version, plan };
   writeRunState(workspace, state);
   writeGatePolicy(workspace, generateGatePreset(mode));
@@ -275,6 +402,14 @@ async function initializeReviewRepository(workspace: string, version: string, mo
   await installAdapter(workspace, model !== undefined ? { model } : {});
   await createRunBranch(runId, workspace);
   await commitCheckpoint({ stageId: "bootstrap", status: "completed", runId, mode, templateVersion: version }, workspace);
+}
+
+function extractTexArgument(content: string, command: string): string | undefined {
+  return new RegExp(`\\\\${command}(?:\\[[^\\]]*\\])?\\s*\\{([^}]*)\\}`, "m").exec(content)?.[1]?.trim();
+}
+
+function formatPaths(paths: string[]): string {
+  return paths.length > 0 ? paths.map((file) => `\`paper/${file}\``).join(", ") : "None detected; unresolved.";
 }
 
 function parseMode(value: string): Mode {
