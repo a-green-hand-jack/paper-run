@@ -1,6 +1,6 @@
 {
   "name": "paper-run",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "An OpenCode-native paper writing harness for autonomous and collaborative end-to-end manuscript production",
   "type": "module",
   "bin": {

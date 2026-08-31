@@ -6,14 +6,14 @@ An OpenCode-native paper writing harness for autonomous and collaborative end-to
 
 `paper-run` is a globally-installed CLI that orchestrates end-to-end paper writing by driving [OpenCode](https://opencode.ai) as the agent runtime. It works with the [agent-writing-harness](https://github.com/a-green-hand-jack/agent-writing-harness) template to provide a complete paper production pipeline.
 
-Version `v0.1.0` has completed a clean 13/13 autonomous headless acceptance run on
+Version `v0.3.0` has completed a clean 13/13 autonomous headless acceptance run on
 PaperWrite-Bench `pwb-0002`; see [issue #21](https://github.com/a-green-hand-jack/paper-run/issues/21)
 for the run configuration, checkpoints, timing, and publication artifacts.
 
 ## Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/a-green-hand-jack/paper-run/v0.2.0/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/a-green-hand-jack/paper-run/v0.3.0/install.sh | sh
 ```
 
 The tag, release tarball, and checksum are version-pinned for reproducible CI, Docker,
@@ -91,6 +91,8 @@ normal stage approval never authorizes a locked-contract change.
 
 Headless runs fail immediately when an unlisted permission requires human approval instead of
 waiting invisibly. Run without `--headless` to review such a request, or add a narrow project rule.
+When headless mode stops for a permission request, the error includes the requested command,
+patterns, stage, session, and request ID and is retained in `.paper-run/run.json` for resume diagnostics.
 The installed primary writer explicitly denies web fetch/search and edits to protected controller,
 harness, and Makefile surfaces. Shell execution remains approval-gated, and headless mode fails
 instead of auto-approving a request. Validation and publication builds remain controller-owned; the

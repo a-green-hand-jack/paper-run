@@ -2,6 +2,17 @@
 
 All notable changes to `paper-run` are documented here.
 
+## v0.3.0 - 2026-08-31
+
+### Added
+
+- Best-effort per-stage performance telemetry in `.paper-run/performance.json`, including model calls, token and cache usage, cost, transcript message count, validator time, checkpoint time, and turn duration.
+- Headless permission diagnostics now report the requested command, patterns, stage, session, and request ID, and remain visible after resume.
+
+### Reliability
+
+- Performance telemetry is runtime-only, ignored by writing repositories, and cannot block the pipeline when the OpenCode usage endpoint is unavailable or slow.
+
 ## v0.2.0 - 2026-08-31
 
 ### Added
