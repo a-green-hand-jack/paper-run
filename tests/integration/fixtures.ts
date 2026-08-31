@@ -62,7 +62,11 @@ export function makeTmpDir(prefix = "paper-run-it-"): string {
 }
 
 export function cleanupTmp(dir: string): void {
-  rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 200 });
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOTEMPTY") throw error;
+  }
 }
 
 /**
