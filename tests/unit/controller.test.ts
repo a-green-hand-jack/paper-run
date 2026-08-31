@@ -1107,8 +1107,12 @@ describe("permissions", () => {
       unattended: true,
     });
 
-    await expect(controller.run()).rejects.toThrow(/Headless run requires approval for the bash permission/);
-    expect(readRunState(tmpDir).stage_status).toBe("pending");
+    await expect(controller.run()).rejects.toThrow(
+      /Headless run requires approval for the bash permission[\s\S]*Stage: bootstrap[\s\S]*Session: ses_1[\s\S]*Request: per_headless[\s\S]*Command: "git push --force"/,
+    );
+    const state = readRunState(tmpDir);
+    expect(state.stage_status).toBe("pending");
+    expect(state.error?.message).toContain('Command: "git push --force"');
     expect(client.permission.reply).not.toHaveBeenCalled();
   });
 
@@ -1122,7 +1126,7 @@ describe("permissions", () => {
             id: "per_child",
             sessionID: "ses_child",
             permission: "bash",
-            metadata: { command: "python3 -c 'arbitrary code'" },
+            patterns: ["python3 *"],
           },
         },
       ],
@@ -1143,9 +1147,11 @@ describe("permissions", () => {
     });
 
     await expect(controller.run()).rejects.toThrow(
-      /Headless run requires approval for the bash permission requested by a child session/,
+      /Headless run requires approval for the bash permission requested by a child session[\s\S]*Stage: bootstrap[\s\S]*Session: ses_child[\s\S]*Request: per_child[\s\S]*Command: "<unavailable>"[\s\S]*Patterns: \["python3 \*"\]/,
     );
-    expect(readRunState(tmpDir).stage_status).toBe("pending");
+    const state = readRunState(tmpDir);
+    expect(state.stage_status).toBe("pending");
+    expect(state.error?.message).toContain("Session: ses_child");
     expect(client.permission.reply).not.toHaveBeenCalled();
     expect(client.session.abort).toHaveBeenCalledWith(
       expect.objectContaining({ sessionID: "ses_child" }),

@@ -99,6 +99,27 @@ describe("prepareRunResume", () => {
     expect(readStageHistory(repo).stages.map((record) => record.stage_id)).toEqual(["bootstrap"]);
   });
 
+  it("preserves a pending headless permission denial across resume reconciliation", async () => {
+    await checkpoint();
+    const message = [
+      "Headless run requires approval for the bash permission.",
+      "Stage: bootstrap",
+      "Session: ses_1",
+      "Request: per_1",
+      'Command: "python3 .agents/tools/check-structure.py"',
+      'Patterns: ["python3 .agents/tools/*"]',
+    ].join("\n");
+    writeRunState(repo, state({
+      stage_status: "pending",
+      error: { stage: "bootstrap", message, at: "2026-08-30T10:05:00.000Z" },
+    }));
+
+    const result = await prepareRunResume(repo);
+
+    expect(result.stage_status).toBe("pending");
+    expect(result.error?.message).toBe(message);
+  });
+
   it("restores an earlier gate_waiting HEAD over later mutable state and history", async () => {
     const sha = await checkpoint("bootstrap", "gate_waiting");
     writeRunState(repo, state({ current_stage: "evidence_inventory", stage_status: "completed" }));
