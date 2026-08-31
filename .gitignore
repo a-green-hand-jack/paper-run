@@ -25,3 +25,4 @@ coverage/
 *.log
 
 # Runtime (paper-run session state is gitignored in writing repos, not here)
+.paper-run/performance.json

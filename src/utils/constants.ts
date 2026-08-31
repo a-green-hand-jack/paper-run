@@ -16,6 +16,7 @@ export const STATE_FILES = {
   stageHistory: "stage-history.json",
   session: "session.json",
   assessment: "assessment.json",
+  performance: "performance.json",
 } as const;
 
 /** OpenCode project-level adapter directory. */

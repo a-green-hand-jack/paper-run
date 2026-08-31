@@ -117,6 +117,46 @@ export const StageHistorySchema = z.object({
 export type StageHistory = z.infer<typeof StageHistorySchema>;
 
 // ---------------------------------------------------------------------------
+// performance.json (gitignored runtime telemetry)
+// ---------------------------------------------------------------------------
+
+const UsageSchema = z.object({
+  model_calls: z.number().int().nonnegative(),
+  input_tokens: z.number().nonnegative(),
+  output_tokens: z.number().nonnegative(),
+  reasoning_tokens: z.number().nonnegative(),
+  cache_read_tokens: z.number().nonnegative(),
+  cache_write_tokens: z.number().nonnegative(),
+  cost: z.number().nonnegative(),
+});
+
+const AttemptPerformanceSchema = z.object({
+  stage_id: z.string(),
+  attempt: z.number().int().nonnegative(),
+  session_id: z.string(),
+  started_at: z.string().datetime(),
+  completed_at: z.string().datetime(),
+  turn_ms: z.number().int().nonnegative(),
+  validator_ms: z.number().int().nonnegative().optional(),
+  checkpoint_ms: z.number().int().nonnegative().optional(),
+  usage: UsageSchema,
+  transcript_messages: z.number().int().nonnegative().optional(),
+  telemetry_available: z.boolean(),
+});
+
+export const PerformanceSchema = z.object({
+  schema_version: z.literal("paper-run-performance-v1"),
+  run_id: z.string().min(1),
+  session_id: z.string().min(1),
+  started_at: z.string().datetime(),
+  updated_at: z.string().datetime(),
+  attempts: z.array(AttemptPerformanceSchema),
+});
+
+export type Performance = z.infer<typeof PerformanceSchema>;
+export type AttemptPerformance = z.infer<typeof AttemptPerformanceSchema>;
+
+// ---------------------------------------------------------------------------
 // session.json (gitignored — ephemeral process state)
 // ---------------------------------------------------------------------------
 
