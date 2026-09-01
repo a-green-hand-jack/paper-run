@@ -1,0 +1,1022 @@
+<title>paper-run 的写作能力边界</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;700&family=IBM+Plex+Sans:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --ground:      #F1F4F4;
+    --surface:     #FFFFFF;
+    --surface-sunk:#E8EDEC;
+    --ink:         #16201F;
+    --ink-soft:    #3A4948;
+    --muted:       #5E6E6C;
+    --rule:        #D3DAD9;
+    --rule-strong: #B4C0BE;
+    --accent:      #1C5C7E;
+    --accent-soft: #E2EDF3;
+    --caution:     #8A5D10;
+    --caution-soft:#F5EBD8;
+    --stop:        #97382C;
+    --stop-soft:   #F6E4E0;
+    --ok:          #2E6B4F;
+
+    --display: "Noto Serif SC", "Songti SC", "SimSun", Georgia, serif;
+    --body: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "PingFang SC",
+            "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+    --measure: 68ch;
+    --pad: clamp(1.1rem, 4vw, 3rem);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #0E1514;
+      --surface:     #151E1D;
+      --surface-sunk:#1B2625;
+      --ink:         #E3EAE8;
+      --ink-soft:    #C0CCCA;
+      --muted:       #8E9E9C;
+      --rule:        #293634;
+      --rule-strong: #3B4B49;
+      --accent:      #74B4D6;
+      --accent-soft: #16303D;
+      --caution:     #D2A353;
+      --caution-soft:#33280F;
+      --stop:        #E0897A;
+      --stop-soft:   #3A1F1A;
+      --ok:          #6FBF95;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:      #0E1514;
+    --surface:     #151E1D;
+    --surface-sunk:#1B2625;
+    --ink:         #E3EAE8;
+    --ink-soft:    #C0CCCA;
+    --muted:       #8E9E9C;
+    --rule:        #293634;
+    --rule-strong: #3B4B49;
+    --accent:      #74B4D6;
+    --accent-soft: #16303D;
+    --caution:     #D2A353;
+    --caution-soft:#33280F;
+    --stop:        #E0897A;
+    --stop-soft:   #3A1F1A;
+    --ok:          #6FBF95;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 16px;
+    line-height: 1.72;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: var(--pad);
+    display: flex;
+    flex-direction: column;
+    gap: clamp(2.6rem, 6vw, 4.2rem);
+  }
+
+  .col { max-width: var(--measure); }
+
+  p, li { color: var(--ink-soft); }
+
+  h1, h2, h3 {
+    font-family: var(--display);
+    color: var(--ink);
+    text-wrap: balance;
+    margin: 0;
+    line-height: 1.32;
+    font-weight: 700;
+  }
+
+  h1 { font-size: clamp(1.9rem, 5vw, 2.9rem); letter-spacing: -0.01em; }
+  h2 { font-size: clamp(1.35rem, 3vw, 1.7rem); }
+  h3 { font-size: 1.05rem; font-weight: 500; }
+
+  a { color: var(--accent); }
+  strong { color: var(--ink); font-weight: 600; }
+  code {
+    font-family: var(--mono);
+    font-size: 0.86em;
+    background: var(--surface-sunk);
+    border-radius: 3px;
+    padding: 0.1em 0.34em;
+    color: var(--ink);
+  }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.14em;
+    color: var(--muted);
+  }
+
+  /* ---------- masthead ---------- */
+
+  .masthead {
+    display: flex;
+    flex-direction: column;
+    gap: 1.1rem;
+    padding-bottom: 2rem;
+    border-bottom: 2px solid var(--rule-strong);
+  }
+  .masthead .lede {
+    font-size: clamp(1.05rem, 2.2vw, 1.22rem);
+    line-height: 1.62;
+    max-width: 62ch;
+    color: var(--ink-soft);
+  }
+  .meta-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.4rem;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--muted);
+  }
+
+  /* ---------- sections ---------- */
+
+  section { display: flex; flex-direction: column; gap: 1.25rem; }
+  section > h2 { padding-bottom: 0.55rem; border-bottom: 1px solid var(--rule); }
+  section p { margin: 0; }
+  section .col > p + p { margin-top: 0.85rem; }
+
+  /* ---------- verdict ledger ---------- */
+
+  .ledger {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(270px, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .ledger > div {
+    background: var(--surface);
+    padding: 1.35rem 1.4rem 1.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+  }
+  .ledger h3 { font-family: var(--body); font-weight: 600; font-size: 0.95rem; }
+  .ledger ul { margin: 0; padding-left: 1.1rem; display: flex; flex-direction: column; gap: 0.45rem; }
+  .ledger li { font-size: 0.93rem; line-height: 1.6; }
+  .tick { color: var(--ok); font-weight: 600; }
+  .cross { color: var(--stop); font-weight: 600; }
+
+  /* ---------- callouts ---------- */
+
+  .note {
+    border-left: 3px solid var(--accent);
+    background: var(--accent-soft);
+    padding: 1rem 1.2rem;
+    border-radius: 0 2px 2px 0;
+    font-size: 0.95rem;
+  }
+  .note.caution { border-left-color: var(--caution); background: var(--caution-soft); }
+  .note p { margin: 0; }
+  .note p + p { margin-top: 0.6rem; }
+  .note .eyebrow { display: block; margin-bottom: 0.4rem; }
+
+  /* ---------- tables ---------- */
+
+  .scroll { overflow-x: auto; border: 1px solid var(--rule); border-radius: 2px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 0.9rem; min-width: 640px; }
+  caption {
+    caption-side: top;
+    text-align: left;
+    padding: 0 0 0.65rem;
+    font-size: 0.86rem;
+    color: var(--muted);
+  }
+  th, td { text-align: left; padding: 0.72rem 1rem; vertical-align: top; border-bottom: 1px solid var(--rule); }
+  thead th {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    font-weight: 500;
+    background: var(--surface-sunk);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td code { background: transparent; padding: 0; color: var(--ink-soft); }
+  .verdict-no { color: var(--stop); font-family: var(--mono); font-size: 0.8rem; white-space: nowrap; }
+
+  /* ---------- stage rail ---------- */
+
+  .rail { display: flex; flex-direction: column; gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 2px; overflow: hidden; }
+  .stage {
+    background: var(--surface);
+    display: grid;
+    grid-template-columns: 3.1rem minmax(0, 1fr) minmax(0, 1.15fr) 5.2rem;
+    gap: 0 1rem;
+    padding: 0.85rem 1.1rem;
+    align-items: baseline;
+  }
+  .stage.is-hardstop { background: var(--stop-soft); }
+  .stage.is-long { background: var(--accent-soft); }
+  .stage .num {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .stage .name { font-weight: 600; color: var(--ink); font-size: 0.95rem; }
+  .stage .sid { font-family: var(--mono); font-size: 0.76rem; color: var(--muted); display: block; }
+  .stage .what { font-size: 0.88rem; color: var(--ink-soft); }
+  .stage .budget {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    color: var(--muted);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+  .stage .flag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0.08em 0.42em;
+    border-radius: 2px;
+    margin-left: 0.4rem;
+    vertical-align: 0.12em;
+  }
+  .flag.gate { background: var(--caution-soft); color: var(--caution); border: 1px solid var(--caution); }
+  .flag.stopper { background: var(--stop-soft); color: var(--stop); border: 1px solid var(--stop); }
+  .legend { display: flex; flex-wrap: wrap; gap: 0.5rem 1.4rem; font-size: 0.82rem; color: var(--muted); }
+
+  @media (max-width: 640px) {
+    .stage { grid-template-columns: 2.4rem 1fr; }
+    .stage .what { grid-column: 2; }
+    .stage .budget { grid-column: 2; text-align: left; }
+  }
+
+  /* ---------- loop diagram ---------- */
+
+  .loop {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    align-items: stretch;
+    padding: 1.3rem;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+  }
+  .loop .step {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    padding: 0.45rem 0.7rem;
+    background: var(--surface-sunk);
+    border: 1px solid var(--rule-strong);
+    border-radius: 2px;
+    color: var(--ink);
+  }
+  .loop .step.pivot { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+  .loop .arrow { align-self: center; color: var(--muted); font-family: var(--mono); font-size: 0.8rem; }
+
+  /* ---------- guards ---------- */
+
+  .guards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); border-radius: 2px; overflow: hidden; }
+  .guard { background: var(--surface); padding: 1.2rem 1.25rem; display: flex; flex-direction: column; gap: 0.5rem; }
+  .guard h3 { font-family: var(--body); font-weight: 600; font-size: 0.93rem; }
+  .guard p { font-size: 0.89rem; margin: 0; }
+  .guard .where { font-family: var(--mono); font-size: 0.74rem; color: var(--muted); }
+
+  /* ---------- suggestions ---------- */
+
+  ol.recs { margin: 0; padding-left: 1.3rem; display: flex; flex-direction: column; gap: 0.9rem; }
+  ol.recs li { font-size: 0.95rem; }
+  ol.recs b { color: var(--ink); }
+
+  footer {
+    border-top: 1px solid var(--rule);
+    padding-top: 1.3rem;
+    font-size: 0.84rem;
+    color: var(--muted);
+  }
+
+  /* ---------- hop chain ---------- */
+
+  .chain { display: flex; flex-direction: column; gap: 0; }
+  .hop {
+    display: grid;
+    grid-template-columns: 2.6rem 1fr;
+    gap: 0 0.9rem;
+    padding: 0.75rem 1rem 0.75rem 0.9rem;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+  }
+  .hop + .hop { margin-top: 0.4rem; }
+  .hop .n {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--muted);
+    border-right: 1px solid var(--rule);
+    padding-right: 0.6rem;
+  }
+  .hop .body { display: flex; flex-direction: column; gap: 0.25rem; }
+  .hop .path { font-family: var(--mono); font-size: 0.82rem; color: var(--ink); word-break: break-all; }
+  .hop .says { font-size: 0.87rem; color: var(--ink-soft); }
+  .hop .says em { color: var(--stop); font-style: normal; font-weight: 600; }
+  .hop-gap {
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    color: var(--muted);
+    padding: 0.3rem 0 0.3rem 1.3rem;
+  }
+  .hop.terminal { border-color: var(--stop); background: var(--stop-soft); }
+
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <span class="eyebrow">设计解读 · paper-run v0.5.0</span>
+    <h1>paper-run 的写作能力边界</h1>
+    <p class="lede">
+      这套系统优化的不是「把论文写好」，而是「不造假、可恢复、可审计地把一份稿子跑完」。
+      写作能力来自别处——底座模型和外部的 agent-writing-harness skill 库。
+      而实测发现：<strong>那套写作方法论并不薄，薄的是送达</strong>。
+      下面是它的输入、13 个阶段、控制器循环，以及 skill 调用链条断在哪里。
+    </p>
+    <div class="meta-row">
+      <span>13 stages</span>
+      <span>2 modes · 6 plan profiles</span>
+      <span>约 10k 行 TypeScript</span>
+      <span>runtime: OpenCode</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>先回答：它有真正的写作能力吗</h2>
+    <div class="col">
+      <p>
+        分成两半看。<strong>这个仓库里几乎没有一行讲「怎么把一段话写好」的内容，而且是刻意的。</strong>
+        <code>src/pipeline/prompts.ts</code> 的注释写得很直白：stage prompt 的职责是<em>定位</em>而非<em>指导</em>，
+        重复写作技艺会制造「第二套互相竞争的写论文说法」，那正是 harness 警告的边界越权。
+      </p>
+      <p>
+        但系统确实会写——写作能力来自三处，都不在这个仓库里。
+      </p>
+    </div>
+
+    <div class="ledger">
+      <div>
+        <span class="eyebrow">paper-run 优化了什么</span>
+        <h3>作业执行与诚实性</h3>
+        <ul>
+          <li><span class="tick">✓</span> 材料不足时<strong>拒绝开写</strong>，而不是硬凑</li>
+          <li><span class="tick">✓</span> 完成状态由仓库判定，不接受 agent 自称「done」</li>
+          <li><span class="tick">✓</span> 任意时刻中断都能从 Git checkpoint 续跑</li>
+          <li><span class="tick">✓</span> 人类锁定的字段 fail-closed，改动需显式授权</li>
+          <li><span class="tick">✓</span> 每个阶段的耗时、token、成本都留痕</li>
+        </ul>
+      </div>
+      <div>
+        <span class="eyebrow">paper-run 没有优化什么</span>
+        <h3>文章本身的好坏</h3>
+        <ul>
+          <li><span class="cross">✕</span> 论证是否成立、故事是否讲得通</li>
+          <li><span class="cross">✕</span> 贡献陈述是否有说服力</li>
+          <li><span class="cross">✕</span> 行文质量、术语一致性之外的语言水准</li>
+          <li><span class="cross">✕</span> 与目标会议审稿口味的贴合度</li>
+          <li><span class="cross">✕</span> 「这篇值不值得投」的任何判断</li>
+        </ul>
+      </div>
+      <div>
+        <span class="eyebrow">写作能力实际来自</span>
+        <h3>三个外部来源</h3>
+        <ul>
+          <li><strong>底座模型</strong>——<code>temperature: 0.3</code>，模型换了质量就换了</li>
+          <li><strong>harness skills</strong>——<code>section-writing</code> 加 2,586 行 vendor 写作参考、329 行 scientific-writing.md，全在 agent-writing-harness 仓库</li>
+          <li><strong>AGENTS.md 路由表</strong>——决定哪个 skill 拥有当前任务</li>
+        </ul>
+        <p style="font-size:0.88rem;">这些资产很厚，<strong>但下一节会看到它们大多到不了模型面前。</strong></p>
+      </div>
+    </div>
+
+    <div class="col">
+      <p>
+        所以那句判断成立：<strong>想提升文章质量，杠杆在 harness skills 和模型选择上，改这个仓库收效很小。</strong>
+        它是作业执行器加诚实性约束，不是写作模型。
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>证据：所有校验器都只看结构</h2>
+    <div class="col">
+      <p>
+        <code>validators.ts</code> 一共六种 validator。把它们逐个列出来，边界就一目了然了——
+        每一种问的都是「东西在不在、脚本退出码是不是 0」，没有一种在问「写得好不好」。
+      </p>
+    </div>
+
+    <div class="scroll">
+      <table>
+        <caption>src/pipeline/validators.ts — 六种校验方式及其判定依据</caption>
+        <thead>
+          <tr>
+            <th>Validator</th>
+            <th>判定依据</th>
+            <th>用在哪</th>
+            <th>能判断质量吗</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>check_script</code></td>
+            <td>跑 harness 的 <code>check-*.py</code>，退出码 0 即通过</td>
+            <td>几乎每个阶段</td>
+            <td class="verdict-no">否 · 结构校验</td>
+          </tr>
+          <tr>
+            <td><code>file_exists</code></td>
+            <td>文件存在，可选 <code>minBytes</code> 下限</td>
+            <td>BRIEF.md、review-findings.md</td>
+            <td class="verdict-no">否 · 只看字节数</td>
+          </tr>
+          <tr>
+            <td><code>contract_section</code></td>
+            <td>契约里某个 <code>## 标题</code> 存在且该节非空</td>
+            <td>PAPER.md、EXPERIMENTS.md</td>
+            <td class="verdict-no">否 · 只看非空</td>
+          </tr>
+          <tr>
+            <td><code>dir_has_content</code></td>
+            <td>目录下有 ≥1 个符合后缀且超过下限的文件</td>
+            <td><code>paper/sections/*.tex</code> ≥ 200 字节</td>
+            <td class="verdict-no">否 · 只看体积</td>
+          </tr>
+          <tr>
+            <td><code>state_file</code></td>
+            <td>JSON 状态文件存在且可解析</td>
+            <td><code>assessment.json</code></td>
+            <td class="verdict-no">否 · 只看格式</td>
+          </tr>
+          <tr>
+            <td><code>publication_build</code></td>
+            <td>构建产物是新鲜的、PDF 有基本结构</td>
+            <td>publication_build</td>
+            <td class="verdict-no">否 · 只看能否编译</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note caution">
+      <span class="eyebrow">这条边界的实际后果</span>
+      <p>
+        一篇<strong>论证松散、故事讲不通、贡献含糊</strong>的稿子，完全可以 13/13 全绿通过，
+        拿到 candidate tag。校验器看不出区别。
+      </p>
+      <p>
+        唯一靠近内容质量的关卡是 <code>independent_review</code>——控制器另开一个 OpenCode session，
+        用 <code>paper-reviewer</code> agent 冷读全文。但它的 validator 也只检查
+        <code>review-findings.md</code> 存在、≥200 字节、且有 Blocker / Major / Minor 三节。
+        <strong>「这次评审本身做得好不好」同样不在校验范围内。</strong>质量判断被委托给了模型，
+        而模型的判断没有被二次校验。
+      </p>
+      <p>
+        补充一条实测事实：harness 里其实<strong>带了一个可用的散文质量检查器</strong>
+        （<code>check_prose_quality.py</code>，支持 <code>--strict --format json --scope</code>），
+        但它躺在 vendor 树里，paper-run 的 <code>runCheck()</code> 够不到——见下一节。
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>那些写作 skill，真的被用上了吗</h2>
+    <div class="col">
+      <p>
+        这是决定后续所有优化方向的问题。把 harness v0.3.0 拉下来实测后，答案是：
+        <strong>方法论资产很厚，但送达链条大概率是断的。</strong>
+      </p>
+    </div>
+
+    <div class="scroll">
+      <table>
+        <caption>harness v0.3.0 实测 — 写作相关资产的规模与可达性</caption>
+        <thead>
+          <tr><th>资产</th><th>规模</th><th>现状</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>.agents/knowledge/scientific-writing.md</code></td>
+            <td>329 行，按 title / abstract / intro / method / experiments 逐节给写法</td>
+            <td>二跳外，仅靠 section-writing 提一句</td>
+          </tr>
+          <tr>
+            <td>vendor <code>ccf-paper-writer/references/</code></td>
+            <td><strong>2,586 行</strong>：storyline-blueprint 536、section-modules 261、research-writing-patterns 259、prose-quality-guardrails 124、length-budget-policy 125 ⋯⋯</td>
+            <td>四跳外，且被明令「非必要不加载」</td>
+          </tr>
+          <tr>
+            <td><code>scripts/check_prose_quality.py</code></td>
+            <td>可执行的散文质量检查器，输出 JSON，带 <code>--strict</code> 退出码</td>
+            <td><strong>从来没有被运行过</strong></td>
+          </tr>
+          <tr>
+            <td><code>.agents/knowledge/venues/</code></td>
+            <td>只有 README.md 和 _template.md</td>
+            <td>默认是空的</td>
+          </tr>
+          <tr>
+            <td><code>.agents/knowledge/writing/</code>（Writing DNA）</td>
+            <td>只有 README.md</td>
+            <td>默认是空的，多个 skill 都在等它被激活</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3 style="margin-top:0.6rem;">断点一：四跳链条，每一跳都是「可以」而不是「必须」</h3>
+
+    <div class="chain">
+      <div class="hop">
+        <span class="n">跳 1</span>
+        <span class="body">
+          <span class="path">paper-run stage prompt</span>
+          <span class="says">「Read <code>.agents/skills/section-writing/SKILL.md</code> and follow it.」<br>
+          「You <em>may</em> load these as sidecars alongside the owner skill.」</span>
+        </span>
+      </div>
+      <div class="hop-gap">↓ 强制读到这里为止</div>
+      <div class="hop">
+        <span class="n">跳 2</span>
+        <span class="body">
+          <span class="path">.agents/skills/section-writing/SKILL.md（95 行）</span>
+          <span class="says">要求带上「<em>the matching surface in</em> <code>scientific-writing.md</code>」，
+          并「<em>when the task is substantial drafting</em>」把 ccf-paper-writer 当 sidecar 加载</span>
+        </span>
+      </div>
+      <div class="hop-gap">↓ 条件判断，模型自行决定</div>
+      <div class="hop">
+        <span class="n">跳 3</span>
+        <span class="body">
+          <span class="path">.agents/skills/ccf-paper-writer/SKILL.md（41 行，只是个 wrapper）</span>
+          <span class="says">本体在 vendor 树：<code>.agents/vendor/ccfa-skills/ccf-paper-writer/SKILL.md</code></span>
+        </span>
+      </div>
+      <div class="hop-gap">↓ 又一跳，且 vendor SKILL.md 自带反加载规则</div>
+      <div class="hop terminal">
+        <span class="n">跳 4</span>
+        <span class="body">
+          <span class="path">vendor references/ — 17 个文件，2,586 行</span>
+          <span class="says">vendor SKILL.md 原话：「<em>Do not load</em> venue guides, exemplar cards, citation workflows,
+          storyline blueprints, section modules, length budgets, templates, or reviewer loops
+          <em>merely because they exist</em>.」——最厚的 536 行 storyline-blueprint 被明确要求非必要不加载，
+          而 paper-run 的 prompt 从不给出「这次必要」的信号。</span>
+        </span>
+      </div>
+    </div>
+
+    <div class="guards" style="margin-top:0.4rem;">
+      <div class="guard">
+        <span class="where">断点二 · 粒度</span>
+        <h3>skill 按节设计，pipeline 按整篇调用</h3>
+        <p><code>section-writing</code> 全篇在讲「the <em>active section</em>」、「only the neighboring text needed for continuity」、「Do not load the complete manuscript」。但 paper-run 只有一个 <code>canonical_drafting</code> 阶段，45 分钟写完整篇。skill 的最小上下文纪律无从执行，模型只能略读后一口气全写——正是产出均质、平庸文本的典型形状。</p>
+      </div>
+      <div class="guard">
+        <span class="where">断点三 · 顺序</span>
+        <h3>两个润色 skill 挂反了</h3>
+        <p><code>lieflat-less-ai-tone</code> 自述是「final manuscript cleanup <em>after</em> writing is complete」，且 <code>ccf-humanization</code> 的阈值优先；vendor writer 要求「Run ccf-humanization as the <em>first</em> manuscript-facing preflight」。而 paper-run 把 lieflat 挂在 <code>canonical_drafting</code>，把 ccf-humanization 挂在 <code>self_review</code>——顺序正好反过来。</p>
+      </div>
+      <div class="guard">
+        <span class="where">断点四 · 可执行性</span>
+        <h3>质量检查器两边都够不着</h3>
+        <p><code>runCheck()</code> 把路径硬编码成 <code>join(HARNESS.toolsDir, script)</code>，只能跑 <code>.agents/tools/</code> 下的脚本；<code>check_prose_quality.py</code> 在 vendor 树里，validator 够不到。而 writer agent 是 <code>bash: ask</code> 且被明令禁止跑脚本。<strong>结果是没有任何一方能运行它。</strong></p>
+      </div>
+      <div class="guard">
+        <span class="where">断点五 · 可观测性</span>
+        <h3>没人知道 skill 到底读没读</h3>
+        <p>系统不记录一轮里读了哪些 skill 文件，<code>performance.json</code> 只记 token 与成本。「skills 有没有被用上」这个问题目前<strong>在系统内无法回答</strong>，只能靠推断。这也意味着任何改进都无法验证是否生效。</p>
+      </div>
+      <div class="guard">
+        <span class="where">断点六 · 未接入的设施</span>
+        <h3>tools 里有五个脚本从未被调用</h3>
+        <p><code>.agents/tools/</code> 下有 13 个受信任脚本，paper-run 的 stage 表只用了 8 个。<code>check-venue-knowledge.py</code>、<code>check-documentation.py</code>、<code>check-reference-metadata.py</code>、<code>check-reference-corrections.py</code>、<code>check-release-records.py</code> 从未出现在任何阶段。</p>
+      </div>
+      <div class="guard">
+        <span class="where">断点七 · 会议知识</span>
+        <h3>venue 是空的，默认退回 NeurIPS</h3>
+        <p>vendor writer 的 Core Rule 是「Write for the target CCF venue, not for a generic paper」，缺省时退回 NeurIPS 指南并标注假设。material assessment 明明问了目标会议，但没有任何阶段把答案落进 <code>.agents/knowledge/venues/</code>。</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>三层分工</h2>
+    <div class="col">
+      <p>
+        <code>stages.ts</code> 开头把这条边界写死了：harness 拥有<em>怎么写论文</em>，
+        paper-run 拥有<em>怎么把一个作业跑完</em>。这也是控制器能保持成单个循环的原因——
+        它从不知道「起草」是什么意思，只知道怎么跑一个阶段、校验它、然后过闸。
+      </p>
+    </div>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>层</th><th>职责</th><th>位置</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>paper-run</strong><br><span class="stage sid">全局 CLI</span></td>
+            <td>阶段排序、校验、gate 策略、Git checkpoint、驱动 OpenCode 会话</td>
+            <td>本仓库</td>
+          </tr>
+          <tr>
+            <td><strong>agent-writing-harness</strong><br><span class="stage sid">仓库模板</span></td>
+            <td>写作方法论：<code>.agents/skills/</code>、契约文件、<code>check-*.py</code></td>
+            <td>init 时按 tag 拉取</td>
+          </tr>
+          <tr>
+            <td><strong>OpenCode</strong><br><span class="stage sid">agent runtime</span></td>
+            <td>实际执行 <code>paper-writer</code> / <code>paper-reviewer</code> 两个 agent</td>
+            <td>外部依赖 ≥1.18.25</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>输入是什么</h2>
+
+    <div class="scroll">
+      <table>
+        <caption>四类输入，按进入系统的时机排列</caption>
+        <thead>
+          <tr><th>时机</th><th>输入</th><th>细节</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>init</code></td>
+            <td><strong>brief（必填）</strong></td>
+            <td>可以是 brief 文件、<code>BRIEF.md</code>、或一个 brief 仓库目录。顺序很讲究：先拉模板 → 用 harness 真实校验器验 brief → 通过后才 commit。brief 不合格不会留下半初始化目录。</td>
+          </tr>
+          <tr>
+            <td><code>init</code></td>
+            <td>mode / template / 仓库位置 / model</td>
+            <td><code>--mode autonomous|collaborative</code>、<code>--template &lt;tag&gt;</code>、<code>--local</code> 或 <code>--repo owner/name</code>。目标目录必须为空。</td>
+          </tr>
+          <tr>
+            <td>运行期</td>
+            <td><strong>材料</strong></td>
+            <td>契约 <code>BRIEF.md</code> + <code>EXPERIMENTS.md</code>，以及 <code>materials/</code>、<code>evidence/</code>、<code>data/</code>、<code>figures/</code> 四个目录；递归深度 ≤ 3，最多 60 个文件——防止原始数据淹没 prompt，agent 可自行深入读。</td>
+          </tr>
+          <tr>
+            <td>每一轮</td>
+            <td><strong>prompt 上下文</strong></td>
+            <td>mode + 最近 4 条阶段历史 + 材料裁决 + 上一轮失败的校验项 + 人类在 gate 给的自由文本指导。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="col">
+      <p>
+        另外两个入口不走 <code>init</code>：<code>paper-run transfer</code> 把外部 TeX 仓库复制进隔离工作区，
+        抽取 title / author / abstract / bib / figure / build 元数据，未知项记为 unresolved，<strong>从不修改源仓库</strong>；
+        <code>paper-run review</code> 做只出 findings 的冷评审，跑 <code>review-report</code> plan
+        （只有 <code>bootstrap</code> + <code>independent_review</code>），永不进入 revision。
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>13 个阶段</h2>
+    <div class="col">
+      <p>
+        每个阶段在 <code>STAGES</code> 表里是<strong>声明式</strong>的：目标一句话、owner skill、可搭配的 sidecar skills、
+        expectedOutputs（原样进 prompt）、validators、超时预算、重试次数。加新阶段不需要碰控制器。
+      </p>
+    </div>
+
+    <div class="rail">
+      <div class="stage is-hardstop">
+        <span class="num">01</span>
+        <span><span class="name">Bootstrap</span><span class="sid">bootstrap</span></span>
+        <span class="what">确认仓库结构正确、brief 已被 ingest</span>
+        <span class="budget">5 min</span>
+      </div>
+      <div class="stage is-hardstop">
+        <span class="num">02</span>
+        <span><span class="name">Material assessment<span class="flag stopper">可叫停</span><span class="flag gate">gate</span></span><span class="sid">material_assessment</span></span>
+        <span class="what">故意没有 harness skill——按 5 条标准判定 usable / partial / unusable，写出 assessment.json</span>
+        <span class="budget">10 min</span>
+      </div>
+      <div class="stage">
+        <span class="num">03</span>
+        <span><span class="name">Evidence inventory</span><span class="sid">evidence_inventory</span></span>
+        <span class="what">盘点有什么证据、每个实验说明什么、缺口在哪</span>
+        <span class="budget">15 min</span>
+      </div>
+      <div class="stage">
+        <span class="num">04</span>
+        <span><span class="name">Paper positioning<span class="flag gate">gate</span></span><span class="sid">paper_positioning</span></span>
+        <span class="what">定死这篇声称什么、写给谁、与已有工作有何不同</span>
+        <span class="budget">15 min</span>
+      </div>
+      <div class="stage">
+        <span class="num">05</span>
+        <span><span class="name">Claim-evidence organization</span><span class="sid">claim_evidence</span></span>
+        <span class="what">每条主张绑定到支撑它的证据；无支撑的标 unresolved，不许软化措辞</span>
+        <span class="budget">15 min</span>
+      </div>
+      <div class="stage">
+        <span class="num">06</span>
+        <span><span class="name">Story and outline<span class="flag gate">gate</span></span><span class="sid">story_outline</span></span>
+        <span class="what">确定叙事弧线与各节职责表</span>
+        <span class="budget">15 min</span>
+      </div>
+      <div class="stage is-long">
+        <span class="num">07</span>
+        <span><span class="name">Canonical drafting<span class="flag gate">gate</span></span><span class="sid">canonical_drafting</span></span>
+        <span class="what">唯一的长回合——把正文写进 <code>paper/sections/*.tex</code></span>
+        <span class="budget">45 min</span>
+      </div>
+      <div class="stage">
+        <span class="num">08</span>
+        <span><span class="name">Citation, figure &amp; table integration</span><span class="sid">citation_integration</span></span>
+        <span class="what">接上引用与图表，并让它们通过完整性检查</span>
+        <span class="budget">20 min</span>
+      </div>
+      <div class="stage">
+        <span class="num">09</span>
+        <span><span class="name">Self review</span><span class="sid">self_review</span></span>
+        <span class="what">独立成一轮——因为 section-writing skill 禁止在起草时做评审 pass</span>
+        <span class="budget">20 min</span>
+      </div>
+      <div class="stage is-long">
+        <span class="num">10</span>
+        <span><span class="name">Independent review<span class="flag gate">gate</span></span><span class="sid">independent_review</span></span>
+        <span class="what">另开 session、换 paper-reviewer agent 冷读；只报告不修改</span>
+        <span class="budget">25 min</span>
+      </div>
+      <div class="stage">
+        <span class="num">11</span>
+        <span><span class="name">Revision</span><span class="sid">revision</span></span>
+        <span class="what">每条 blocker 与 major 要么修掉、要么写明理由推迟</span>
+        <span class="budget">30 min</span>
+      </div>
+      <div class="stage">
+        <span class="num">12</span>
+        <span><span class="name">Publication variant build</span><span class="sid">publication_build</span></span>
+        <span class="what">构建投稿变体并让它真的编译出 PDF</span>
+        <span class="budget">20 min</span>
+      </div>
+      <div class="stage">
+        <span class="num">13</span>
+        <span><span class="name">Paper candidate<span class="flag gate">gate</span></span><span class="sid">paper_candidate</span></span>
+        <span class="what">汇总候选稿，明确列出人类还需决定什么——禁止声称可以投稿</span>
+        <span class="budget">20 min</span>
+      </div>
+    </div>
+
+    <div class="legend">
+      <span><span class="flag gate">gate</span> collaborative 模式下暂停等人</span>
+      <span><span class="flag stopper">可叫停</span> 唯一能终止整条流水线的阶段</span>
+      <span>预算为默认值，<code>--stage-timeout-multiplier</code> 可整体放大</span>
+    </div>
+  </section>
+
+  <section>
+    <h2>单个阶段内部的循环</h2>
+    <div class="col">
+      <p>
+        控制器是<strong>一个循环、没有任何 per-stage 特例</strong>。阶段相关的东西全在 stage 表里，
+        模式相关的东西全在 gate 策略里，剩下这部分是无论哪种情况都必须正确的：
+        知道一轮什么时候真的结束、拒绝接受 agent 自称完成、以及让仓库在任何中断后都能续跑。
+      </p>
+    </div>
+
+    <div class="loop">
+      <span class="step">渲染 prompt</span><span class="arrow">→</span>
+      <span class="step">发给 agent</span><span class="arrow">→</span>
+      <span class="step pivot">等 session.idle</span><span class="arrow">→</span>
+      <span class="step">锁定契约比对</span><span class="arrow">→</span>
+      <span class="step pivot">跑 validators</span><span class="arrow">→</span>
+      <span class="step">失败则重试 ≤ retries</span><span class="arrow">→</span>
+      <span class="step">gate</span><span class="arrow">→</span>
+      <span class="step">Git checkpoint</span><span class="arrow">→</span>
+      <span class="step">推进</span>
+    </div>
+
+    <div class="guards">
+      <div class="guard">
+        <span class="where">controller.ts</span>
+        <h3>完成是观测出来的，不是声明出来的</h3>
+        <p>控制器不读 agent 的散文找「done」信号，只等事件流的 <code>session.idle</code>，然后自己跑 harness 校验脚本。原话：没有有效 validator 的阶段，就是一个能悄悄什么都不产出的阶段。</p>
+      </div>
+      <div class="guard">
+        <span class="where">prompts.ts</span>
+        <h3>重试 prompt 具体到检查项名</h3>
+        <p>不说「没通过，再试一次」，而是逐条列出失败的检查。并附一句关键的话：如果某个检查无法诚实满足就直说——<strong>失败的检查可以恢复，编造的结果不能。</strong></p>
+      </div>
+      <div class="guard">
+        <span class="where">controller.ts</span>
+        <h3>每次退出都可恢复</h3>
+        <p>状态在风险动作<em>之前</em>写。已通过校验但停在人类 gate 的阶段会 checkpoint 成 <code>gate_waiting</code>，resume 时直接回到那个 gate 重新校验，不重跑 agent；被中断且没 checkpoint 的阶段整个重跑。</p>
+      </div>
+      <div class="guard">
+        <span class="where">locked-contract.ts</span>
+        <h3>锁定契约 fail-closed</h3>
+        <p>每轮前后对 <code>PAPER.md</code> 的 locked 字段和 <code>BRIEF.md</code> 做基线比对，被改就 block。人类要改需要 <code>--authorize-locked-change &lt;base-commit&gt;:&lt;digest&gt;</code>，且必须两个值都对得上。</p>
+      </div>
+      <div class="guard">
+        <span class="where">controller.ts</span>
+        <h3>gate 之后不许再动</h3>
+        <p>通过 gate 后如果工作区还有额外变更，拒绝提交并报出具体文件名——避免把未经校验的改动顺手扫进 checkpoint。</p>
+      </div>
+      <div class="guard">
+        <span class="where">permissions.ts</span>
+        <h3>headless 遇权限请求立即失败</h3>
+        <p>不隐形挂起。错误里带上请求的命令、pattern、阶段、session、request ID，并留在 <code>run.json</code> 里供 resume 诊断。</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2>防造假是贯穿式的</h2>
+    <div class="col">
+      <p>
+        这是整个系统最核心的价值取向，出现在四个层面。注释里给的理由是：
+        这是唯一一种「看似合理的结果比没有结果更糟」的失败模式，所以值得冗余。
+      </p>
+    </div>
+
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr><th>层面</th><th>机制</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>prompt 层</strong></td>
+            <td>每个阶段的 ground rules 都重复 never fabricate；缺口的正确处理是 <code>% TODO(paper-run):</code> 标记加契约里的 unresolved。原话：<em>带着诚实窟窿的稿子是这条流水线的正确输出。</em></td>
+          </tr>
+          <tr>
+            <td><strong>裁决复核层</strong></td>
+            <td><code>reconcileVerdict()</code> <strong>不信任</strong> agent 自己填的 verdict 字段，而是从 assessment 自身数据重新推导：有 blockers 一律 unusable；research_question 和 evidence 都 absent 一律 unusable；声称 usable 但存在 absent 项则降级 partial。<strong>只降不升</strong>——因为模型在「要有用」的压力下更倾向高估就绪度。</td>
+          </tr>
+          <tr>
+            <td><strong>硬停层</strong></td>
+            <td>unusable 的阻断<strong>不走 gate 策略</strong>——autonomous 下所有 gate 都是 auto，靠 gate 会直接冲进起草。它是 <code>isBlockedByUnusableMaterials()</code> 这个独立谓词，每个阶段前都检查一次，resume 也走不过去。</td>
+          </tr>
+          <tr>
+            <td><strong>权限层</strong></td>
+            <td><code>paper-writer</code> agent 明确 <code>webfetch: deny</code> / <code>websearch: deny</code>，禁止编辑 <code>.agents/</code>、<code>.paper-run/</code>、<code>AGENTS.md</code>、<code>Makefile</code>，不许自己跑 git 或校验脚本。写手只能用手上的材料，或者记一个 unresolved。</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>模式与 plan</h2>
+    <div class="col">
+      <p>
+        <strong>模式只是 gate 策略的预设，不是两条代码路径。</strong>
+        <code>autonomous</code> 全部 auto；<code>collaborative</code> 在 6 个决策点暂停。
+        因为 mode 是一个值而不是控制流，中途切换会在下一个 gate 生效，不打扰正在飞的阶段。
+      </p>
+      <p>
+        gate 有<strong>两种打开方式</strong>：在 TUI 里回答 question picker，或者跑 <code>/approve</code>
+        写入 <code>stage_status: approved</code>。先到先得，另一边会被清理。
+        人类如果给的是自定义回答，会被当作 guidance 触发 revise，最多 3 轮。
+      </p>
+    </div>
+
+    <div class="scroll">
+      <table>
+        <caption>plans.ts — 六个 profile，也可用 --stages 自定义</caption>
+        <thead>
+          <tr><th>Profile</th><th>包含的阶段</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>full</code></td><td>全部 13 个</td></tr>
+          <tr><td><code>existing-manuscript</code></td><td>跳过 evidence_inventory、story_outline、drafting、citation——用于已有稿子</td></tr>
+          <tr><td><code>review-and-revise</code></td><td>bootstrap → material_assessment → self_review → independent_review → revision</td></tr>
+          <tr><td><code>review-report</code></td><td>只有 bootstrap + independent_review，严格只出报告</td></tr>
+          <tr><td><code>build-only</code></td><td>bootstrap + publication_build</td></tr>
+          <tr><td><code>review-only</code></td><td>旧名兼容别名，等同 review-and-revise</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note">
+      <span class="eyebrow">plan 的四条硬约束</span>
+      <p>
+        必须包含 <code>bootstrap</code>；必须保持流水线顺序且不重复；
+        <code>revision</code> 依赖同一 plan 里有 <code>independent_review</code>；
+        <code>paper_candidate</code> 依赖 <code>publication_build</code>。
+        plan 固化在 <code>run.json</code> 里，<strong>resume 不能悄悄改变作业范围</strong>。
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <h2>利用现有设施提高写作能力</h2>
+    <div class="col">
+      <p>
+        上一节的六个断点，指向同一个结论：<strong>不需要先去写新的写作方法论，
+        现有资产已经足够厚，缺的是把它们真正送到模型面前、并且能验证送到了。</strong>
+        下面按「杠杆 ÷ 成本」排序，全部只使用已经存在的设施。
+      </p>
+    </div>
+    <ol class="recs">
+      <li>
+        <b>先补可观测性，否则后面每一条都无法验证。</b>
+        控制器已经在 <code>waitForIdle</code> 里订阅 OpenCode 事件流，只要把每轮的 read 类工具调用路径收集起来，
+        写进 <code>performance.json</code>，就能第一次回答「这一轮到底读了哪些 skill 文件」。
+        这是唯一一条必须最先做的——它把「skill 有没有被用上」从推断变成事实，
+        也是后面所有改动的 A/B 依据。
+      </li>
+      <li>
+        <b>把 <code>canonical_drafting</code> 拆成按节的多轮。</b>
+        <code>section-writing</code> 是按节设计的，现在被当整篇调用。stage 表是声明式的，
+        拆分不需要改控制器循环——每节一轮，各自带自己的 expectedOutputs 和 validator，
+        并且天然让 45 分钟的超时预算落在更可控的粒度上。这是最大的单点杠杆，
+        因为它同时解决了粒度错配和上下文超载。
+      </li>
+      <li>
+        <b>把加载链条从「可以」改成「必须」，并绕过中间跳。</b>
+        与其让模型沿着四跳自己走到 vendor 树，不如在 stage prompt 里直接给出这一节需要的
+        绝对路径：<code>scientific-writing.md</code> 的对应小节、
+        <code>references/prose-quality-guardrails.md</code>、
+        以及起草阶段的 <code>references/storyline-blueprint.md</code>。
+        vendor SKILL.md 的反加载规则说的是「不要仅仅因为存在就加载」——
+        由 prompt 显式点名，正是它要求的那个「任务确实需要」的信号。
+      </li>
+      <li>
+        <b>把 <code>check_prose_quality.py</code> 接成 validator。</b>
+        它已经是成品：读文件、输出 JSON、<code>--strict</code> 给退出码，
+        检测填充开头、精确性词汇、em-dash 密度、句长均匀度、段落均匀度、分号密度。
+        接法有两种——放宽 <code>runCheck()</code> 允许 vendor 下的受信任脚本，
+        或在 init 时把它纳入 <code>.agents/tools/</code>。建议先以 <code>required: false</code> 上线，
+        积累几轮真实分布再决定阈值。这是唯一一个能让「写得好不好」进入 validator 的现成入口。
+      </li>
+      <li>
+        <b>把两个润色 skill 的顺序摆正。</b>
+        <code>ccf-humanization</code> 前移到 <code>canonical_drafting</code> 作为 preflight，
+        <code>lieflat-less-ai-tone</code> 后移到 <code>self_review</code> 之后作为最终白名单 pass。
+        这是改两行 sidecar 声明的事，但它让两个 skill 各自回到自己设计的位置上。
+      </li>
+      <li>
+        <b>让 venue 知识真正落地。</b>
+        <code>paper_positioning</code> 阶段已经在定「写给谁」，让它同时产出
+        <code>.agents/knowledge/venues/&lt;venue&gt;.md</code>，
+        然后挂上<strong>已经存在但从未被调用</strong>的 <code>check-venue-knowledge.py</code> 做校验。
+        这样 vendor writer 的「Write for the target venue」才有东西可依，
+        不必默默退回 NeurIPS 兜底。
+      </li>
+      <li>
+        <b>让 review 的产出可机器消费。</b>
+        现在 <code>review-findings.md</code> 只被检查「有三节且非空」。
+        改成结构化输出后，控制器就能强制「每条 blocker 在 revision 后要么消失、要么有显式 deferral 理由」，
+        而不是把这件事托付给下一轮模型的自觉。顺序上排在后面，
+        因为它的收益依赖前面几条先把稿子质量抬上来。
+      </li>
+    </ol>
+
+    <div class="note">
+      <span class="eyebrow">度量层</span>
+      <p>
+        以上七条都需要一把尺子，否则「写得更好了」只是主观印象。
+        外部 benchmark <code>Paper-Writing-Exam</code> 是这把尺子；
+        README 里那个 PaperWrite-Bench <code>pwb-0002</code> 的 13/13 验证的是<em>流水线跑通</em>，
+        不是写作质量。第 1 条的 skill 读取日志负责回答「改动生效了吗」，
+        benchmark 负责回答「生效之后写得更好了吗」——两者缺一不可。
+      </p>
+    </div>
+  </section>
+
+  <footer>
+    依据 paper-run v0.5.0（commit 9925848）源码，以及 agent-writing-harness v0.3.0 检出实测整理。
+    覆盖 <code>src/pipeline/</code>、<code>src/controller/</code>、<code>src/state/</code>、<code>templates/opencode/</code>、
+    <code>.agents/skills/</code>、<code>.agents/vendor/</code>。
+    最后一节为改进建议，非现有实现。
+  </footer>
+
+</div>
