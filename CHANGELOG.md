@@ -2,6 +2,55 @@
 
 All notable changes to `paper-run` are documented here.
 
+## Unreleased
+
+### Writing quality
+
+The harness carries far more writing craft than the pipeline was reaching: a
+329-line section-writing knowledge file and roughly 2,600 lines of vendored
+references, all of it several optional hops behind the owner skill. These
+changes close the distance and make the result checkable.
+
+- Stages can now declare **required reading**. The stage prompt names the exact
+  guidance files — `scientific-writing.md`, `section-modules.md`,
+  `prose-quality-guardrails.md`, `storyline-blueprint.md`,
+  `citation-workflow.md`, `length-budget-policy.md`, `ccf-a-venue-map.md` — as
+  part of the method rather than leaving them behind "load as a sidecar when…"
+  conditionals.
+- **Canonical drafting runs one turn per manuscript section**, the granularity
+  `section-writing` is written for. The stage's time budget is divided across
+  the sections it finds rather than multiplied, and a repository without a
+  `paper/sections/` layout falls back to a single turn.
+- **`ccf-humanization` and `lieflat-less-ai-tone` swapped stages.** The vendored
+  writing engine calls humanization "the first manuscript-facing preflight" and
+  lieflat a final whitelist pass over finished text; they had been attached the
+  other way round.
+- **Prose quality is now a validator.** Filler openers, promotional vocabulary,
+  template enumerations, em-dash density, and uniform sentence and paragraph
+  rhythm are checked on drafting, self review, and revision. Advisory by
+  design: these are mechanical tells, not a judgement about the argument.
+- **Positioning records the target venue** under `.agents/knowledge/venues/`,
+  validated by the harness's own `check-venue-knowledge.py` — a script that
+  shipped in `.agents/tools/` but no stage had ever run.
+
+### Review findings are now data
+
+- Independent review writes `.paper-run/review-findings.json` alongside the
+  Markdown report: id, severity, location, summary, and evidence per finding.
+- Revision must record a `resolution` for every blocker and major finding —
+  `fixed` or `deferred`, each with a reason. Deferral is legitimate; silence is
+  not. Previously the only check on a revision turn was that the contracts
+  still parsed, so the hardest finding could be skipped for free.
+- Runs with no structured findings file still pass, so work recorded before
+  this change is not stranded mid-pipeline.
+
+### Observability
+
+- `.paper-run/performance.json` records `files_read` and `guidance_read` per
+  attempt, recovered from the session transcript. Whether a stage actually
+  loaded the skills it was pointed at was previously unanswerable from the
+  run's own record; every change above can now be checked rather than assumed.
+
 ## v0.5.0 - 2026-08-31
 
 ### Added

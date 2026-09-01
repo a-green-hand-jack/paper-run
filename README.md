@@ -180,6 +180,36 @@ Claim-evidence qualification belongs in `EXPERIMENTS.md ## Claim-evidence bindin
 locked thesis and contribution sections remain fail-closed. The final candidate is a reviewable
 artifact, not an assertion that a Human has approved submission or an external release.
 
+Canonical drafting runs one turn per file in `paper/sections/`, which is the granularity the
+harness's `section-writing` skill is written for. The stage's time budget is divided across those
+sections rather than multiplied; a repository without that layout falls back to a single turn.
+
+## Writing guidance
+
+`paper-run` sequences the work; the harness owns how a paper is written. What it adds is delivery
+and evidence that the guidance arrived.
+
+Stages name their **required reading** directly in the prompt — the section-writing knowledge file,
+the storyline blueprint, the prose-quality guardrails, the citation workflow, the page-budget
+policy. The harness keeps this material several optional hops behind each owner skill, so a stage
+that needs it says so rather than hoping the chain is walked.
+
+Three checks watch the result:
+
+- **Prose quality** runs on drafting, self review, and revision, reporting filler openers,
+  promotional vocabulary, template enumerations, em-dash density, and uniform sentence and
+  paragraph rhythm. It is advisory: these are mechanical tells, not a verdict on the argument.
+- **Review findings** are written as data to `.paper-run/review-findings.json` as well as prose,
+  and revision must record a `resolution` — `fixed` or `deferred`, with a reason — for every
+  blocker and major finding before the stage can complete.
+- **`files_read` and `guidance_read`** in `.paper-run/performance.json` record which files each
+  turn actually opened, so "did this stage load the skill it was pointed at?" is answerable from
+  the run's own record.
+
+Positioning also records the target venue under `.agents/knowledge/venues/`, checked by the
+harness's `check-venue-knowledge.py`. Fields that cannot be verified from the brief and materials
+are marked `UNVERIFIED` rather than filled in with a plausible date or page limit.
+
 ## Architecture
 
 ```

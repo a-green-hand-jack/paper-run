@@ -357,7 +357,8 @@
       这套系统优化的不是「把论文写好」，而是「不造假、可恢复、可审计地把一份稿子跑完」。
       写作能力来自别处——底座模型和外部的 agent-writing-harness skill 库。
       而实测发现：<strong>那套写作方法论并不薄，薄的是送达</strong>。
-      下面是它的输入、13 个阶段、控制器循环，以及 skill 调用链条断在哪里。
+      本文记录它的输入、13 个阶段、控制器循环，诊断出 skill 调用链条断在七处，
+      并记录针对这七处已经落地的改动。
     </p>
     <div class="meta-row">
       <span>13 stages</span>
@@ -534,12 +535,12 @@
           <tr>
             <td><code>scripts/check_prose_quality.py</code></td>
             <td>可执行的散文质量检查器，输出 JSON，带 <code>--strict</code> 退出码</td>
-            <td><strong>从来没有被运行过</strong></td>
+            <td>过去从未被运行；规则现已移植为控制器原生 validator</td>
           </tr>
           <tr>
             <td><code>.agents/knowledge/venues/</code></td>
             <td>只有 README.md 和 _template.md</td>
-            <td>默认是空的</td>
+            <td>过去默认为空；positioning 阶段现在负责填写</td>
           </tr>
           <tr>
             <td><code>.agents/knowledge/writing/</code>（Writing DNA）</td>
@@ -586,39 +587,41 @@
           <span class="says">vendor SKILL.md 原话：「<em>Do not load</em> venue guides, exemplar cards, citation workflows,
           storyline blueprints, section modules, length budgets, templates, or reviewer loops
           <em>merely because they exist</em>.」——最厚的 536 行 storyline-blueprint 被明确要求非必要不加载，
-          而 paper-run 的 prompt 从不给出「这次必要」的信号。</span>
+          而 paper-run 的 prompt 从不给出「这次必要」的信号。<br>
+          <strong>现在给了：</strong>stage 表新增 <code>requiredReading</code>，prompt 直接点名文件路径，
+          storyline-blueprint 挂在 story_outline，section-modules 与 prose-quality-guardrails 挂在起草。</span>
         </span>
       </div>
     </div>
 
     <div class="guards" style="margin-top:0.4rem;">
       <div class="guard">
-        <span class="where">断点二 · 粒度</span>
+        <span class="where">断点二 · 粒度 · 已修复</span>
         <h3>skill 按节设计，pipeline 按整篇调用</h3>
         <p><code>section-writing</code> 全篇在讲「the <em>active section</em>」、「only the neighboring text needed for continuity」、「Do not load the complete manuscript」。但 paper-run 只有一个 <code>canonical_drafting</code> 阶段，45 分钟写完整篇。skill 的最小上下文纪律无从执行，模型只能略读后一口气全写——正是产出均质、平庸文本的典型形状。</p>
       </div>
       <div class="guard">
-        <span class="where">断点三 · 顺序</span>
+        <span class="where">断点三 · 顺序 · 已修复</span>
         <h3>两个润色 skill 挂反了</h3>
         <p><code>lieflat-less-ai-tone</code> 自述是「final manuscript cleanup <em>after</em> writing is complete」，且 <code>ccf-humanization</code> 的阈值优先；vendor writer 要求「Run ccf-humanization as the <em>first</em> manuscript-facing preflight」。而 paper-run 把 lieflat 挂在 <code>canonical_drafting</code>，把 ccf-humanization 挂在 <code>self_review</code>——顺序正好反过来。</p>
       </div>
       <div class="guard">
-        <span class="where">断点四 · 可执行性</span>
+        <span class="where">断点四 · 可执行性 · 已修复</span>
         <h3>质量检查器两边都够不着</h3>
         <p><code>runCheck()</code> 把路径硬编码成 <code>join(HARNESS.toolsDir, script)</code>，只能跑 <code>.agents/tools/</code> 下的脚本；<code>check_prose_quality.py</code> 在 vendor 树里，validator 够不到。而 writer agent 是 <code>bash: ask</code> 且被明令禁止跑脚本。<strong>结果是没有任何一方能运行它。</strong></p>
       </div>
       <div class="guard">
-        <span class="where">断点五 · 可观测性</span>
+        <span class="where">断点五 · 可观测性 · 已修复</span>
         <h3>没人知道 skill 到底读没读</h3>
         <p>系统不记录一轮里读了哪些 skill 文件，<code>performance.json</code> 只记 token 与成本。「skills 有没有被用上」这个问题目前<strong>在系统内无法回答</strong>，只能靠推断。这也意味着任何改进都无法验证是否生效。</p>
       </div>
       <div class="guard">
-        <span class="where">断点六 · 未接入的设施</span>
+        <span class="where">断点六 · 未接入的设施 · 部分修复</span>
         <h3>tools 里有五个脚本从未被调用</h3>
         <p><code>.agents/tools/</code> 下有 13 个受信任脚本，paper-run 的 stage 表只用了 8 个。<code>check-venue-knowledge.py</code>、<code>check-documentation.py</code>、<code>check-reference-metadata.py</code>、<code>check-reference-corrections.py</code>、<code>check-release-records.py</code> 从未出现在任何阶段。</p>
       </div>
       <div class="guard">
-        <span class="where">断点七 · 会议知识</span>
+        <span class="where">断点七 · 会议知识 · 已修复</span>
         <h3>venue 是空的，默认退回 NeurIPS</h3>
         <p>vendor writer 的 Core Rule 是「Write for the target CCF venue, not for a generic paper」，缺省时退回 NeurIPS 指南并标注假设。material assessment 明明问了目标会议，但没有任何阶段把答案落进 <code>.agents/knowledge/venues/</code>。</p>
       </div>
@@ -937,86 +940,96 @@
   </section>
 
   <section>
-    <h2>利用现有设施提高写作能力</h2>
+    <h2>已经落地的七条改动</h2>
     <div class="col">
       <p>
-        上一节的六个断点，指向同一个结论：<strong>不需要先去写新的写作方法论，
-        现有资产已经足够厚，缺的是把它们真正送到模型面前、并且能验证送到了。</strong>
-        下面按「杠杆 ÷ 成本」排序，全部只使用已经存在的设施。
+        上一节的七个断点指向同一个结论：<strong>不需要先写新的写作方法论，
+        现有资产已经足够厚，缺的是把它们送到模型面前、并且能验证送到了。</strong>
+        以下改动全部只使用已存在的设施，按依赖顺序落地。
       </p>
     </div>
-    <ol class="recs">
-      <li>
-        <b>先补可观测性，否则后面每一条都无法验证。</b>
-        控制器已经在 <code>waitForIdle</code> 里订阅 OpenCode 事件流，只要把每轮的 read 类工具调用路径收集起来，
-        写进 <code>performance.json</code>，就能第一次回答「这一轮到底读了哪些 skill 文件」。
-        这是唯一一条必须最先做的——它把「skill 有没有被用上」从推断变成事实，
-        也是后面所有改动的 A/B 依据。
-      </li>
-      <li>
-        <b>把 <code>canonical_drafting</code> 拆成按节的多轮。</b>
-        <code>section-writing</code> 是按节设计的，现在被当整篇调用。stage 表是声明式的，
-        拆分不需要改控制器循环——每节一轮，各自带自己的 expectedOutputs 和 validator，
-        并且天然让 45 分钟的超时预算落在更可控的粒度上。这是最大的单点杠杆，
-        因为它同时解决了粒度错配和上下文超载。
-      </li>
-      <li>
-        <b>把加载链条从「可以」改成「必须」，并绕过中间跳。</b>
-        与其让模型沿着四跳自己走到 vendor 树，不如在 stage prompt 里直接给出这一节需要的
-        绝对路径：<code>scientific-writing.md</code> 的对应小节、
-        <code>references/prose-quality-guardrails.md</code>、
-        以及起草阶段的 <code>references/storyline-blueprint.md</code>。
-        vendor SKILL.md 的反加载规则说的是「不要仅仅因为存在就加载」——
-        由 prompt 显式点名，正是它要求的那个「任务确实需要」的信号。
-      </li>
-      <li>
-        <b>把 <code>check_prose_quality.py</code> 接成 validator。</b>
-        它已经是成品：读文件、输出 JSON、<code>--strict</code> 给退出码，
-        检测填充开头、精确性词汇、em-dash 密度、句长均匀度、段落均匀度、分号密度。
-        接法有两种——放宽 <code>runCheck()</code> 允许 vendor 下的受信任脚本，
-        或在 init 时把它纳入 <code>.agents/tools/</code>。建议先以 <code>required: false</code> 上线，
-        积累几轮真实分布再决定阈值。这是唯一一个能让「写得好不好」进入 validator 的现成入口。
-      </li>
-      <li>
-        <b>把两个润色 skill 的顺序摆正。</b>
-        <code>ccf-humanization</code> 前移到 <code>canonical_drafting</code> 作为 preflight，
-        <code>lieflat-less-ai-tone</code> 后移到 <code>self_review</code> 之后作为最终白名单 pass。
-        这是改两行 sidecar 声明的事，但它让两个 skill 各自回到自己设计的位置上。
-      </li>
-      <li>
-        <b>让 venue 知识真正落地。</b>
-        <code>paper_positioning</code> 阶段已经在定「写给谁」，让它同时产出
-        <code>.agents/knowledge/venues/&lt;venue&gt;.md</code>，
-        然后挂上<strong>已经存在但从未被调用</strong>的 <code>check-venue-knowledge.py</code> 做校验。
-        这样 vendor writer 的「Write for the target venue」才有东西可依，
-        不必默默退回 NeurIPS 兜底。
-      </li>
-      <li>
-        <b>让 review 的产出可机器消费。</b>
-        现在 <code>review-findings.md</code> 只被检查「有三节且非空」。
-        改成结构化输出后，控制器就能强制「每条 blocker 在 revision 后要么消失、要么有显式 deferral 理由」，
-        而不是把这件事托付给下一轮模型的自觉。顺序上排在后面，
-        因为它的收益依赖前面几条先把稿子质量抬上来。
-      </li>
-    </ol>
+
+    <div class="scroll">
+      <table>
+        <caption>改动清单 — 对应断点、落点、以及是否会拦住一个阶段</caption>
+        <thead>
+          <tr><th>改动</th><th>落点</th><th>拦截力</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>读取日志</strong><br><span class="stage sid">断点五</span></td>
+            <td>每轮结束后回读 session transcript，抽出 read 类工具的路径，写进 <code>performance.json</code> 的 <code>files_read</code> 与 <code>guidance_read</code>。复用了本来就在调用的 <code>session.messages()</code>。</td>
+            <td>不拦截（遥测）</td>
+          </tr>
+          <tr>
+            <td><strong>按节起草</strong><br><span class="stage sid">断点二</span></td>
+            <td>Stage 表新增 <code>perSection</code>；控制器按 <code>paper/sections/*.tex</code> 逐节发 prompt，阶段预算<em>除以</em>节数而非乘以节数，缺少该目录时退回单轮。</td>
+            <td>不拦截（改变过程）</td>
+          </tr>
+          <tr>
+            <td><strong>required reading</strong><br><span class="stage sid">断点一</span></td>
+            <td>Stage 表新增 <code>requiredReading</code>，prompt 里以「不是可选背景」的措辞点名具体文件；文件缺失时要求 agent 在总结里说明而不是假装读过。</td>
+            <td>不拦截（但要求汇报）</td>
+          </tr>
+          <tr>
+            <td><strong>散文质量 validator</strong><br><span class="stage sid">断点四</span></td>
+            <td>vendor 规则原生移植到控制器：填充开头、精确性词汇、模板枚举、em-dash 密度、句长与段落均匀度、分号密度。挂在起草、自审、修订三个阶段。</td>
+            <td>advisory（只报告）</td>
+          </tr>
+          <tr>
+            <td><strong>润色顺序摆正</strong><br><span class="stage sid">断点三</span></td>
+            <td><code>ccf-humanization</code> 前移到起草当 preflight，<code>lieflat-less-ai-tone</code> 后移到自审当最终白名单 pass——各自回到 skill 自述的位置。</td>
+            <td>不拦截（改变过程）</td>
+          </tr>
+          <tr>
+            <td><strong>venue 落地</strong><br><span class="stage sid">断点六、七</span></td>
+            <td>positioning 阶段产出 <code>.agents/knowledge/venues/&lt;venue&gt;.md</code>，接上从未被调用过的 <code>check-venue-knowledge.py</code>。写手权限在 <code>.agents/**</code> 全禁的前提下开了这一个窄口子。</td>
+            <td>advisory（只报告）</td>
+          </tr>
+          <tr>
+            <td><strong>findings 结构化</strong><br><span class="stage sid">断点五</span></td>
+            <td>评审同时写 <code>review-findings.json</code>；修订阶段必须为每条 blocker/major 记录 <code>resolution</code>（<code>fixed</code> 或 <code>deferred</code> 加理由）。</td>
+            <td><strong>会拦截</strong>（required）</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="note caution">
+      <span class="eyebrow">一处有意的偏离</span>
+      <p>
+        散文检查器是<strong>移植</strong>而非调用。<code>verifyTrustedHarnessScript</code> 把可执行范围
+        硬锁在 <code>.agents/tools/</code>，且要求文件 sha256 在 init 时进入本地 trust 清单；
+        而这个脚本在 vendor 树里。为一个检查器放开这条边界，等于让控制器执行第三方 vendored Python——
+        不是划算的交易。规则码、严重度、阈值与原脚本对齐，日后 harness 若把它挪进
+        <code>.agents/tools/</code>，这个模块可以直接换回普通的 <code>check_script</code> validator。
+      </p>
+      <p>
+        移植时还收紧了一条规则：原脚本把散落的 first / second / third 当作模板枚举，
+        这会在「the first dataset… the second… The third」这种正常行文上误报。
+        误报无法通过改写消除，只会训练读者忽略检查器，所以新实现只匹配真正的子句开头枚举。
+      </p>
+    </div>
 
     <div class="note">
       <span class="eyebrow">度量层</span>
       <p>
         以上七条都需要一把尺子，否则「写得更好了」只是主观印象。
         外部 benchmark <code>Paper-Writing-Exam</code> 是这把尺子；
-        README 里那个 PaperWrite-Bench <code>pwb-0002</code> 的 13/13 验证的是<em>流水线跑通</em>，
-        不是写作质量。第 1 条的 skill 读取日志负责回答「改动生效了吗」，
-        benchmark 负责回答「生效之后写得更好了吗」——两者缺一不可。
+        README 里 PaperWrite-Bench <code>pwb-0002</code> 的 13/13 验证的是<em>流水线跑通</em>，
+        不是写作质量。读取日志负责回答「改动生效了吗」——
+        <code>guidance_read</code> 里出现不出现 <code>scientific-writing.md</code> 是可查的事实；
+        benchmark 负责回答「生效之后写得更好了吗」。两者缺一不可，
+        而在这批改动之前，第一个问题在系统内根本无法回答。
       </p>
     </div>
   </section>
 
   <footer>
-    依据 paper-run v0.5.0（commit 9925848）源码，以及 agent-writing-harness v0.3.0 检出实测整理。
+    依据 paper-run 源码，以及 agent-writing-harness v0.3.0 检出实测整理。
     覆盖 <code>src/pipeline/</code>、<code>src/controller/</code>、<code>src/state/</code>、<code>templates/opencode/</code>、
     <code>.agents/skills/</code>、<code>.agents/vendor/</code>。
-    最后一节为改进建议，非现有实现。
+    诊断部分描述改动前的状态；最后一节描述已落地的改动。
   </footer>
 
 </div>
