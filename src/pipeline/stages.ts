@@ -61,7 +61,18 @@ export type Validator =
   /** A JSON state file paper-run itself owns must be present and parseable. */
   | { type: "state_file"; file: string; required: boolean; message: string }
   /** Validate fresh artifacts declared by .agents/paper-build.json or the safe fallback. */
-  | { type: "publication_build"; required: boolean; message: string };
+  | { type: "publication_build"; required: boolean; message: string }
+  /** Mechanical prose tells across the drafted manuscript. Advisory by design. */
+  | { type: "prose_quality"; dir?: string; required: boolean; message: string }
+  /** The reviewer left machine-readable findings, not only a prose report. */
+  | { type: "review_findings"; required: boolean; message: string }
+  /** Findings at these severities were each fixed or explicitly deferred. */
+  | {
+      type: "findings_addressed";
+      severities: readonly string[];
+      required: boolean;
+      message: string;
+    };
 
 export interface Stage {
   id: StageId;
@@ -76,6 +87,33 @@ export interface Stage {
   harnessSkill: string | null;
   /** Sidecar skills the agent may load alongside the owner. Never a substitute. */
   sidecarSkills?: string[];
+  /**
+   * Files the prompt names outright, as required reading.
+   *
+   * The harness keeps its writing craft several hops away from any one skill:
+   * `section-writing` mentions `scientific-writing.md`, routes substantial
+   * drafting to the `ccf-paper-writer` wrapper, which routes on to a vendored
+   * skill, which holds the references that actually describe how to write a
+   * section. Every hop is phrased as a permission ("load as a sidecar when…"),
+   * and the vendored skill adds an explicit rule against loading its
+   * references "merely because they exist".
+   *
+   * A stage prompt that says only "read the owner skill" therefore leaves the
+   * deepest material unreached. Naming the files here is the signal the
+   * vendored rule asks for — this task does need them — and turns an optional
+   * chain into a stated expectation.
+   */
+  requiredReading?: string[];
+  /**
+   * Drive this stage one manuscript section per turn.
+   *
+   * `section-writing` is written for a single active section: it asks for the
+   * section and its immediate neighbours, and says not to load the whole
+   * manuscript. Running it once for an entire paper makes that discipline
+   * impossible to follow, so the model skims the skill and drafts everything
+   * in one pass — the shape that produces uniform, flat prose.
+   */
+  perSection?: boolean;
   /** What the agent is expected to produce. Rendered into the prompt verbatim. */
   expectedOutputs: string[];
   /** How the controller verifies the stage really happened. */
@@ -184,9 +222,15 @@ export const STAGES: Record<StageId, Stage> = {
     objective:
       "Fix what this paper claims, for whom, and how it differs from what exists.",
     harnessSkill: ".agents/skills/style-alignment/SKILL.md",
+    // The venue map is what turns "a paper" into "a paper for this venue",
+    // which is the first thing the writing engine asks for and the last thing
+    // it can infer on its own.
+    requiredReading: [".agents/knowledge/venues/README.md", ".agents/vendor/ccfa-skills/ccf-paper-writer/references/ccf-a-venue-map.md"],
     expectedOutputs: [
       "PAPER.md ## Paper identity",
       "PAPER.md ## What readers should believe, including central thesis and contributions",
+      "A venue knowledge file under .agents/knowledge/venues/ for the target venue, "
+        + "filled from the brief and materials with every unverified field marked UNVERIFIED",
       "Anything genuinely undecided left under ## Unresolved rather than invented",
     ],
     validators: [
@@ -209,6 +253,14 @@ export const STAGES: Record<StageId, Stage> = {
         script: "check-paper-contracts.py",
         required: true,
         message: "Paper contracts failed structural validation",
+      },
+      // Advisory: a venue file is worth having but a run whose brief names no
+      // venue should not be blocked from positioning the paper at all.
+      {
+        type: "check_script",
+        script: "check-venue-knowledge.py",
+        required: false,
+        message: "Venue knowledge is missing or incomplete",
       },
     ],
     timeoutMs: 15 * MINUTES,
@@ -252,6 +304,9 @@ export const STAGES: Record<StageId, Stage> = {
     name: "Story and outline",
     objective: "Decide the narrative arc and what each section is responsible for.",
     harnessSkill: ".agents/skills/style-alignment/SKILL.md",
+    // 536 lines on how a paper's argument is staged. It is the single densest
+    // piece of craft in the harness and the stage it belongs to is this one.
+    requiredReading: [".agents/vendor/ccfa-skills/ccf-paper-writer/references/storyline-blueprint.md"],
     expectedOutputs: [
       "PAPER.md ## Story and structure, including the narrative arc",
       "Section responsibilities table: what each section must accomplish for the reader",
@@ -280,10 +335,21 @@ export const STAGES: Record<StageId, Stage> = {
     name: "Canonical drafting",
     objective: "Write the manuscript sections in paper/sections/.",
     harnessSkill: ".agents/skills/section-writing/SKILL.md",
+    // ccf-humanization moves here from self review: the vendored writing
+    // engine calls it "the first manuscript-facing preflight", and running a
+    // preflight after the draft exists inverts it. lieflat-less-ai-tone goes
+    // the other way, to self review, because it describes itself as a final
+    // whitelist pass over finished text.
     sidecarSkills: [
       ".agents/skills/ccf-paper-writer/SKILL.md",
-      ".agents/skills/lieflat-less-ai-tone/SKILL.md",
+      ".agents/skills/ccf-humanization/SKILL.md",
     ],
+    requiredReading: [
+      ".agents/knowledge/scientific-writing.md",
+      ".agents/vendor/ccfa-skills/ccf-paper-writer/references/section-modules.md",
+      ".agents/vendor/ccfa-skills/ccf-paper-writer/references/prose-quality-guardrails.md",
+    ],
+    perSection: true,
     expectedOutputs: [
       "Draft prose in paper/sections/*.tex following the agreed outline",
       "Every unsupported statement carried as an explicit % TODO(paper-run): marker",
@@ -304,8 +370,17 @@ export const STAGES: Record<StageId, Stage> = {
         required: true,
         message: "Paper interface macros are missing or inconsistent",
       },
+      // Advisory on purpose: these are mechanical tells, not a judgement about
+      // the argument. A finding means re-read the passage, not rewrite to
+      // satisfy a counter.
+      {
+        type: "prose_quality",
+        required: false,
+        message: "Draft prose shows mechanical writing patterns",
+      },
     ],
-    // Drafting is the longest turn in the pipeline by a wide margin.
+    // Drafting remains the longest stage in the pipeline. With perSection set
+    // the controller divides this budget across the sections it finds.
     timeoutMs: 45 * MINUTES,
     retries: 2,
   },
@@ -319,6 +394,7 @@ export const STAGES: Record<StageId, Stage> = {
       ".agents/skills/citation-support-review/SKILL.md",
       ".agents/skills/ccf-visual-composer/SKILL.md",
     ],
+    requiredReading: [".agents/vendor/ccfa-skills/ccf-paper-writer/references/citation-workflow.md"],
     expectedOutputs: [
       "Citations resolved in paper/refs.bib with the reference ledger updated",
       "Figures and tables referenced from the text actually present",
@@ -349,7 +425,9 @@ export const STAGES: Record<StageId, Stage> = {
     // section-writing forbids review passes during drafting, so this is a
     // separate turn on purpose.
     harnessSkill: ".agents/skills/section-writing/SKILL.md",
-    sidecarSkills: [".agents/skills/ccf-humanization/SKILL.md"],
+    // The final whitelist pass belongs here, over text that is finished.
+    sidecarSkills: [".agents/skills/lieflat-less-ai-tone/SKILL.md"],
+    requiredReading: [".agents/vendor/ccfa-skills/ccf-paper-writer/references/prose-quality-guardrails.md"],
     expectedOutputs: [
       "Internal inconsistencies between sections resolved",
       "Terminology and notation unified against PAPER_INTERFACES.md",
@@ -369,6 +447,11 @@ export const STAGES: Record<StageId, Stage> = {
         required: true,
         message: "Draft reference and claim-evidence integrity check failed",
       },
+      {
+        type: "prose_quality",
+        required: false,
+        message: "Manuscript prose still shows mechanical writing patterns",
+      },
     ],
     timeoutMs: 20 * MINUTES,
     retries: 1,
@@ -386,6 +469,11 @@ export const STAGES: Record<StageId, Stage> = {
     ],
     expectedOutputs: [
       ".paper-run/review-findings.md with blocker, major, and minor findings sections",
+      ".paper-run/review-findings.json carrying the same findings as data: "
+        + 'schema_version "paper-run-review-findings-v1", reviewed_at, and a findings array '
+        + "where each entry has id, severity (blocker|major|minor), location, summary, and evidence",
+      "Both files must describe the same findings — the JSON is the record the "
+        + "revision stage is checked against, the Markdown is for the human",
       "Unsupported claims and fabrication risks called out explicitly",
       "Findings only — this stage reports, it does not fix",
     ],
@@ -405,6 +493,11 @@ export const STAGES: Record<StageId, Stage> = {
         message: `Independent review report has no substantive ## ${severity} findings section (write \"None.\" when there are no findings)`,
       })),
       {
+        type: "review_findings",
+        required: true,
+        message: "Independent review did not produce valid .paper-run/review-findings.json",
+      },
+      {
         type: "check_script",
         script: "check-paper-contracts.py",
         required: true,
@@ -412,7 +505,10 @@ export const STAGES: Record<StageId, Stage> = {
       },
     ],
     timeoutMs: 25 * MINUTES,
-    retries: 1,
+    // One extra attempt over the old budget: the stage now has to satisfy a
+    // schema as well as write a report, and a malformed first attempt is a
+    // cheap thing to fix.
+    retries: 2,
   },
 
   revision: {
@@ -423,6 +519,8 @@ export const STAGES: Record<StageId, Stage> = {
     sidecarSkills: [".agents/skills/control-review/SKILL.md"],
     expectedOutputs: [
       "Every blocker and major finding either fixed or explicitly deferred with a reason",
+      "For each of those findings, a resolution recorded in .paper-run/review-findings.json: "
+        + '{ "status": "fixed" | "deferred", "note": "what changed, or why it cannot be settled yet" }',
       "Changes to locked contract items proposed rather than made",
     ],
     validators: [
@@ -438,6 +536,20 @@ export const STAGES: Record<StageId, Stage> = {
         required: true,
         message: "Reference integrity check failed",
       },
+      // Before findings were structured, the only thing standing between a
+      // revision turn and the next stage was that the contracts still parsed.
+      // Skipping the hardest finding cost nothing.
+      {
+        type: "findings_addressed",
+        severities: ["blocker", "major"],
+        required: true,
+        message: "Review findings were left unaddressed",
+      },
+      {
+        type: "prose_quality",
+        required: false,
+        message: "Revised prose still shows mechanical writing patterns",
+      },
     ],
     timeoutMs: 30 * MINUTES,
     retries: 2,
@@ -449,6 +561,9 @@ export const STAGES: Record<StageId, Stage> = {
     objective: "Build the publication variants and make them compile.",
     harnessSkill: ".agents/skills/publication-planning/SKILL.md",
     sidecarSkills: [".agents/skills/ccf-submission-checker/SKILL.md"],
+    requiredReading: [
+      ".agents/vendor/ccfa-skills/ccf-paper-writer/references/length-budget-policy.md",
+    ],
     expectedOutputs: [
       "PUBLICATION.md ## Active variants reflecting what was built",
       "make pdf succeeding for the configured variants",

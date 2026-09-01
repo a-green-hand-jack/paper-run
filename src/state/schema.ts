@@ -157,6 +157,14 @@ const AttemptPerformanceSchema = z.object({
   usage: UsageSchema,
   transcript_messages: z.number().int().nonnegative().optional(),
   telemetry_available: z.boolean(),
+  /**
+   * Project files the agent opened during the turn, relative to the project
+   * root. This is how a run can be asked whether the writing skills it was
+   * pointed at were actually loaded — without it, skill routing is unfalsifiable.
+   */
+  files_read: z.array(z.string().min(1)).optional(),
+  /** The subset of `files_read` that is harness writing guidance. */
+  guidance_read: z.array(z.string().min(1)).optional(),
 });
 
 export const PerformanceSchema = z.object({
@@ -170,6 +178,46 @@ export const PerformanceSchema = z.object({
 
 export type Performance = z.infer<typeof PerformanceSchema>;
 export type AttemptPerformance = z.infer<typeof AttemptPerformanceSchema>;
+
+// ---------------------------------------------------------------------------
+// review-findings.json
+// ---------------------------------------------------------------------------
+
+export const FindingSeverity = z.enum(["blocker", "major", "minor"]);
+
+/**
+ * How a revision turn disposed of a finding.
+ *
+ * `deferred` is a legitimate outcome — not every finding can be fixed with the
+ * evidence at hand — but it has to be stated, with a reason, rather than left
+ * to silence. That distinction is the whole reason findings are structured:
+ * a Markdown report can only be checked for having headings, while this can be
+ * checked for having been acted on.
+ */
+const FindingResolutionSchema = z.object({
+  status: z.enum(["fixed", "deferred"]),
+  note: z.string().min(1),
+});
+
+const ReviewFindingSchema = z.object({
+  id: z.string().min(1),
+  severity: FindingSeverity,
+  /** Where in the manuscript, specific enough to act on. */
+  location: z.string().min(1),
+  summary: z.string().min(1),
+  /** What in the text or the record supports the finding. */
+  evidence: z.string().min(1).optional(),
+  resolution: FindingResolutionSchema.optional(),
+});
+
+export const ReviewFindingsSchema = z.object({
+  schema_version: z.literal("paper-run-review-findings-v1"),
+  reviewed_at: z.string().datetime(),
+  findings: z.array(ReviewFindingSchema),
+});
+
+export type ReviewFindings = z.infer<typeof ReviewFindingsSchema>;
+export type ReviewFinding = z.infer<typeof ReviewFindingSchema>;
 
 const PublicationVariantStatusSchema = z.enum(["pending", "running", "completed", "failed", "timed_out", "canceled"]);
 const PublicationVariantSchema = z.object({

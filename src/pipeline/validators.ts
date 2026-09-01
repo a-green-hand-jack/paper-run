@@ -19,7 +19,8 @@ import { execa } from "execa";
 import { runCheck } from "../harness/harness.js";
 import { PAPER_RUN_DIR } from "../utils/constants.js";
 import { log } from "../utils/logger.js";
-import { readPublication, writePublication } from "../state/store.js";
+import { readPublication, readReviewFindings, writePublication } from "../state/store.js";
+import { inspectManuscript, blockingProseIssues, summarizeProseReport } from "./prose-quality.js";
 
 import type { Stage, Validator } from "./stages.js";
 
@@ -163,6 +164,46 @@ async function runValidator(
       };
     }
 
+    case "prose_quality": {
+      const report = inspectManuscript(projectDir, validator.dir);
+      const blocking = blockingProseIssues(report);
+      const passed = blocking.length === 0;
+      return {
+        name: "prose-quality",
+        passed,
+        required: validator.required,
+        message: passed ? undefined : `${validator.message}: ${summarizeProseReport(report)}`,
+      };
+    }
+
+    case "review_findings": {
+      let outcome: { passed: boolean; detail: string };
+      try {
+        const findings = readReviewFindings(projectDir);
+        outcome = findings
+          ? { passed: true, detail: `${findings.findings.length} finding(s)` }
+          : { passed: false, detail: "the file was not written" };
+      } catch (err) {
+        outcome = { passed: false, detail: err instanceof Error ? err.message : String(err) };
+      }
+      return {
+        name: "review-findings",
+        passed: outcome.passed,
+        required: validator.required,
+        message: outcome.passed ? undefined : `${validator.message} (${outcome.detail})`,
+      };
+    }
+
+    case "findings_addressed": {
+      const outcome = checkFindingsAddressed(projectDir, validator.severities);
+      return {
+        name: "findings-addressed",
+        passed: outcome.passed,
+        required: validator.required,
+        message: outcome.passed ? undefined : `${validator.message}: ${outcome.detail}`,
+      };
+    }
+
     case "publication_build": {
       const result = validatePublicationArtifacts(projectDir, options.publicationBaseline);
       return {
@@ -178,6 +219,60 @@ async function runValidator(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Every finding at the given severities must have been disposed of.
+ *
+ * "Disposed of" deliberately includes `deferred`: a reviewer can raise a point
+ * the evidence cannot settle, and forcing a fix would push the revision turn
+ * towards inventing one. What it does not include is silence. Before findings
+ * were structured, the only check on a revision was that the contracts still
+ * parsed, so a turn could quietly skip the hardest finding and still pass.
+ *
+ * Passes when no structured findings file exists. Runs recorded before the
+ * reviewer wrote JSON have only the Markdown report, and blocking their
+ * revision on a file the earlier stage never produced would strand them.
+ */
+function checkFindingsAddressed(
+  projectDir: string,
+  severities: readonly string[],
+): { passed: boolean; detail: string } {
+  let findings;
+  try {
+    findings = readReviewFindings(projectDir);
+  } catch (err) {
+    return { passed: false, detail: `review-findings.json is unreadable: ${describe(err)}` };
+  }
+
+  if (!findings) {
+    return { passed: true, detail: "no structured findings were recorded" };
+  }
+
+  const wanted = new Set(severities);
+  const outstanding = findings.findings.filter(
+    (finding) => wanted.has(finding.severity) && !finding.resolution,
+  );
+
+  if (outstanding.length === 0) {
+    const covered = findings.findings.filter((finding) => wanted.has(finding.severity)).length;
+    return { passed: true, detail: `${covered} finding(s) addressed` };
+  }
+
+  const named = outstanding
+    .slice(0, 5)
+    .map((finding) => `${finding.id} (${finding.severity}, ${finding.location})`)
+    .join("; ");
+  const more = outstanding.length > 5 ? `, and ${outstanding.length - 5} more` : "";
+  return {
+    passed: false,
+    detail: `${outstanding.length} finding(s) have no resolution: ${named}${more}`,
+  };
+}
+
+function describe(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 
 /**
  * True when a markdown heading exists and has substantive content under it.

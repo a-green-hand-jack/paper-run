@@ -32,9 +32,10 @@ import {
   SessionStateSchema,
   AssessmentSchema,
   PerformanceSchema,
+  ReviewFindingsSchema,
   PublicationSchema,
 } from "./schema.js";
-import type { RunState, GatePolicy, StageHistory, SessionState, Assessment, Performance, Publication } from "./schema.js";
+import type { RunState, GatePolicy, StageHistory, SessionState, Assessment, Performance, Publication, ReviewFindings } from "./schema.js";
 
 const STATE_LOCK_FILE = "state.lock";
 const STATE_LOCK_TIMEOUT_MS = 5_000;
@@ -362,6 +363,23 @@ export function readAssessment(projectDir: string): Assessment | null {
   const path = statePath(projectDir, STATE_FILES.assessment);
   if (!existsSync(path)) return null;
   return readJson(path, AssessmentSchema, STATE_FILES.assessment);
+}
+
+// ---------------------------------------------------------------------------
+// review-findings.json
+// ---------------------------------------------------------------------------
+
+/**
+ * Read the structured review findings, when the reviewer wrote them.
+ *
+ * Returns null when the file is absent so callers can degrade gracefully:
+ * runs created before findings were structured still have only the Markdown
+ * report, and a missing file must not be mistaken for "no findings".
+ */
+export function readReviewFindings(projectDir: string): ReviewFindings | null {
+  const path = statePath(projectDir, STATE_FILES.reviewFindings);
+  if (!existsSync(path)) return null;
+  return readJson(path, ReviewFindingsSchema, STATE_FILES.reviewFindings);
 }
 
 // ---------------------------------------------------------------------------

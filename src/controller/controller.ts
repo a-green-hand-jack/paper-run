@@ -28,7 +28,7 @@
 
 import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 import { isDeepStrictEqual } from "node:util";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { execa } from "execa";
 
 import {
@@ -53,7 +53,7 @@ import { resolveStageTimeoutMultiplier } from "../state/timeout.js";
 
 import { remainingStages, stageNumber, TOTAL_STAGES } from "../pipeline/stages.js";
 import type { Stage } from "../pipeline/stages.js";
-import { renderStagePrompt, renderRemediationPrompt } from "../pipeline/prompts.js";
+import { renderStagePrompt, renderRemediationPrompt, renderSectionPrompt } from "../pipeline/prompts.js";
 import {
   buildPublicationArtifacts,
   capturePublicationBaseline,
@@ -83,6 +83,9 @@ import {
   abortAndWaitForIdle,
   showToast,
   getSessionUsage,
+  getSessionReads,
+  relativizeReads,
+  guidanceReads,
 } from "../opencode/session.js";
 import type { SessionUsageSnapshot } from "../opencode/session.js";
 import { waitForIdle } from "../opencode/events.js";
@@ -142,6 +145,8 @@ interface TurnTelemetry {
   validatorMs?: number;
   usage: SessionUsageSnapshot;
   telemetryAvailable: boolean;
+  /** Project files the agent opened, relative to the project root. */
+  filesRead: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -265,17 +270,21 @@ export class PipelineController {
         return { status: "interrupted" };
       }
 
-      const prompt =
+      // A first attempt may be split across sections; a remediation turn never
+      // is, because it exists to fix named checks rather than to draft.
+      const prompts =
         attempt === 0
-          ? this.buildStagePrompt(stage, guidance)
-          : renderRemediationPrompt(stage, {
-              mode: this.policy.mode,
-              history: this.history().stages,
-              validationFailures: validation!.failures,
-            });
+          ? this.buildStagePrompts(stage, guidance)
+          : [
+              renderRemediationPrompt(stage, {
+                mode: this.policy.mode,
+                history: this.history().stages,
+                validationFailures: validation!.failures,
+              }),
+            ];
 
       try {
-        await this.takeTurn(stage, prompt);
+        await this.takeTurns(stage, prompts);
       } catch (err) {
         this.recordPerformance(stage, {});
         if (err instanceof StageTimeoutError) {
@@ -440,7 +449,7 @@ export class PipelineController {
     const startedAt = new Date().toISOString();
 
     try {
-      await this.takeTurn(stage, this.buildStagePrompt(stage, guidance));
+      await this.takeTurns(stage, this.buildStagePrompts(stage, guidance));
     } catch (err) {
       this.recordPerformance(stage, {});
       if (err instanceof StageTimeoutError) {
@@ -710,6 +719,99 @@ export class PipelineController {
     }
   }
 
+  /**
+   * The turns that make up one attempt at a stage.
+   *
+   * Usually one. A `perSection` stage becomes one turn per manuscript section,
+   * which is the granularity its owner skill is written for: `section-writing`
+   * asks for a single active section plus its neighbours and says not to load
+   * the whole manuscript, advice that cannot be followed when a single turn is
+   * asked to produce an entire paper.
+   */
+  private buildStagePrompts(stage: Stage, guidance: string | undefined): string[] {
+    if (!stage.perSection) return [this.buildStagePrompt(stage, guidance)];
+
+    const sections = this.discoverSections();
+    if (sections.length === 0) {
+      // No section files to iterate: fall back rather than skip the stage.
+      // Whether that is a real problem is the validators' call, not this one's.
+      return [this.buildStagePrompt(stage, guidance)];
+    }
+
+    const ctx = {
+      mode: this.policy.mode,
+      history: this.history().stages,
+      ...(this.materialVerdict ? { materialVerdict: this.materialVerdict } : {}),
+      ...(guidance ? { humanGuidance: guidance } : {}),
+    };
+
+    return sections.map((path, index) =>
+      renderSectionPrompt(stage, ctx, { path, index: index + 1, total: sections.length }),
+    );
+  }
+
+  /**
+   * Manuscript sections, in reading order.
+   *
+   * The harness template ships `paper/sections/` with numbered files, so the
+   * filesystem already carries both the list and its order. Returns an empty
+   * list when the layout is missing or implausibly large — a repository with
+   * fifty section files would turn one stage into fifty model turns, which is
+   * not an improvement over one.
+   */
+  private discoverSections(maxSections = 20): string[] {
+    const dir = `${this.opts.projectDir}/paper/sections`;
+    if (!existsSync(dir)) return [];
+
+    let entries: string[];
+    try {
+      entries = readdirSync(dir).sort();
+    } catch {
+      return [];
+    }
+
+    const sections = entries
+      .filter((entry) => entry.endsWith(".tex"))
+      .filter((entry) => {
+        try {
+          return statSync(`${dir}/${entry}`).isFile();
+        } catch {
+          return false;
+        }
+      })
+      .map((entry) => `paper/sections/${entry}`);
+
+    return sections.length > maxSections ? [] : sections;
+  }
+
+  /**
+   * Run each prompt in turn, then hand one merged telemetry record onward.
+   *
+   * The stage's declared budget covers the whole stage, so a split stage
+   * divides it rather than multiplying it. The floor keeps a paper with many
+   * short sections from giving each one a budget too small to finish in.
+   */
+  private async takeTurns(stage: Stage, prompts: string[]): Promise<void> {
+    if (prompts.length <= 1) {
+      await this.takeTurn(stage, prompts[0] ?? this.buildStagePrompt(stage, undefined));
+      return;
+    }
+
+    const MIN_TURN_MS = 5 * 60_000;
+    const perTurnMs = Math.max(MIN_TURN_MS, Math.ceil(this.stageTimeoutMs(stage) / prompts.length));
+
+    log.step(`${stage.name}: ${prompts.length} section turns, ${Math.round(perTurnMs / 60_000)}min each`);
+
+    let merged: TurnTelemetry | undefined;
+    for (const [index, prompt] of prompts.entries()) {
+      if (this.aborted()) break;
+      log.info(`  section ${index + 1}/${prompts.length}`);
+      await this.takeTurn(stage, prompt, perTurnMs);
+      merged = mergeTelemetry(merged, this.turnTelemetry);
+    }
+    this.turnTelemetry = merged;
+  }
+
   private buildStagePrompt(stage: Stage, guidance: string | undefined): string {
     if (stage.id === "material_assessment") {
       return renderAssessmentPrompt({
@@ -727,7 +829,7 @@ export class PipelineController {
   }
 
   /** Send a prompt and wait for the agent to finish, answering permissions meanwhile. */
-  private async takeTurn(stage: Stage, prompt: string): Promise<void> {
+  private async takeTurn(stage: Stage, prompt: string, timeoutMs?: number): Promise<void> {
     this.currentStageId = stage.id;
     const review = stage.id === "independent_review";
     const sessionId = review
@@ -753,7 +855,7 @@ export class PipelineController {
       await waitForIdle(this.opts.client, {
         sessionId,
         directory: this.opts.projectDir,
-        timeoutMs: this.stageTimeoutMs(stage),
+        timeoutMs: timeoutMs ?? this.stageTimeoutMs(stage),
         stageId: stage.id,
         ...(this.opts.signal ? { signal: this.opts.signal } : {}),
         onEvent: (event) => this.onEvent(event),
@@ -772,6 +874,12 @@ export class PipelineController {
       throw error;
     } finally {
       const after = await getSessionUsage(this.opts.client, sessionId);
+      // Which files the turn opened. Best-effort: a telemetry gap must never
+      // fail a stage, so this returns an empty list rather than throwing.
+      const filesRead = relativizeReads(
+        await getSessionReads(this.opts.client, sessionId),
+        this.opts.projectDir,
+      );
       this.turnTelemetry = {
         sessionId,
         startedAt: new Date(startedAt).toISOString(),
@@ -779,6 +887,7 @@ export class PipelineController {
         turnMs: Date.now() - startedAt,
         usage: usageDelta(before, after),
         telemetryAvailable: before !== null && after !== null,
+        filesRead,
       };
       this.activeSessionId = this.opts.sessionId;
     }
@@ -1160,6 +1269,12 @@ export class PipelineController {
       },
       ...(turn.usage.transcriptMessages !== undefined ? { transcript_messages: turn.usage.transcriptMessages } : {}),
       telemetry_available: turn.telemetryAvailable,
+      ...(turn.filesRead.length > 0
+        ? {
+            files_read: turn.filesRead,
+            guidance_read: guidanceReads(turn.filesRead),
+          }
+        : {}),
     });
     try {
       writePerformance(this.opts.projectDir, performance);
@@ -1238,6 +1353,44 @@ function usageDelta(before: SessionUsageSnapshot | null, after: SessionUsageSnap
     cacheWriteTokens: Math.max(0, current.cacheWriteTokens - prior.cacheWriteTokens),
     cost: Math.max(0, current.cost - prior.cost),
     ...(current.transcriptMessages !== undefined ? { transcriptMessages: current.transcriptMessages } : {}),
+  };
+}
+
+/**
+ * Fold one section turn's telemetry into the stage's running total.
+ *
+ * A split stage still reports as one attempt: the times and token counts add
+ * up, the file list is the union, and the session is the same throughout.
+ */
+function mergeTelemetry(
+  base: TurnTelemetry | undefined,
+  next: TurnTelemetry | undefined,
+): TurnTelemetry | undefined {
+  if (!next) return base;
+  if (!base) return next;
+
+  return {
+    sessionId: next.sessionId,
+    startedAt: base.startedAt,
+    completedAt: next.completedAt,
+    turnMs: base.turnMs + next.turnMs,
+    ...(base.validatorMs !== undefined || next.validatorMs !== undefined
+      ? { validatorMs: (base.validatorMs ?? 0) + (next.validatorMs ?? 0) }
+      : {}),
+    usage: {
+      modelCalls: base.usage.modelCalls + next.usage.modelCalls,
+      inputTokens: base.usage.inputTokens + next.usage.inputTokens,
+      outputTokens: base.usage.outputTokens + next.usage.outputTokens,
+      reasoningTokens: base.usage.reasoningTokens + next.usage.reasoningTokens,
+      cacheReadTokens: base.usage.cacheReadTokens + next.usage.cacheReadTokens,
+      cacheWriteTokens: base.usage.cacheWriteTokens + next.usage.cacheWriteTokens,
+      cost: base.usage.cost + next.usage.cost,
+      ...(next.usage.transcriptMessages !== undefined
+        ? { transcriptMessages: next.usage.transcriptMessages }
+        : {}),
+    },
+    telemetryAvailable: base.telemetryAvailable && next.telemetryAvailable,
+    filesRead: [...new Set([...base.filesRead, ...next.filesRead])].sort(),
   };
 }
 

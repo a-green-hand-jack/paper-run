@@ -5,6 +5,8 @@
  * Independent reviews use a newly created cold session for every attempt.
  */
 
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
+
 import type { OpencodeClient, Message } from "@opencode-ai/sdk/v2";
 
 import { OpencodeError } from "../utils/errors.js";
@@ -266,4 +268,112 @@ export async function showToast(
     // No TUI attached is the normal case for a headless run.
     log.debug(`toast not delivered: ${String(err)}`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// What the turn actually read
+// ---------------------------------------------------------------------------
+
+/** Tools whose input names a file the agent opened. */
+const READ_TOOLS = new Set(["read", "view", "cat", "readfile", "read_file"]);
+
+/** Input keys OpenCode tools use for the path they operate on. */
+const PATH_KEYS = ["filePath", "file_path", "path", "file"] as const;
+
+/**
+ * Collect the project files an agent read during a session.
+ *
+ * paper-run points every stage at an owner skill and lets the skill point on
+ * to its own references. Nothing verified that the chain was ever walked: a
+ * turn that ignored `section-writing` and wrote from the model's priors looked
+ * exactly like one that followed it. Reading the transcript back is the
+ * cheapest way to tell the difference, and `session.messages` is already
+ * fetched for token accounting.
+ *
+ * Best-effort by construction. The transcript shape is OpenCode's, not ours,
+ * so every access is defensive and an unrecognised part is skipped rather than
+ * throwing — a telemetry gap must never fail a stage.
+ */
+export async function getSessionReads(
+  client: OpencodeClient,
+  sessionId: string,
+  opts: { timeoutMs?: number } = {},
+): Promise<string[]> {
+  const timeoutMs = opts.timeoutMs ?? 2_000;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const result = await Promise.race([
+      client.session.messages({ sessionID: sessionId }),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), timeoutMs);
+      }),
+    ]);
+    if (result === null || result.error || !result.data || !Array.isArray(result.data)) return [];
+
+    const paths = new Set<string>();
+    for (const projected of result.data) {
+      const parts = (projected as { parts?: unknown }).parts;
+      if (!Array.isArray(parts)) continue;
+      for (const part of parts) {
+        const path = readPathFromPart(part);
+        if (path) paths.add(path);
+      }
+    }
+    return [...paths].sort();
+  } catch {
+    return [];
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+/** Pull the file path out of one transcript part, when it is a read call. */
+function readPathFromPart(part: unknown): string | null {
+  if (typeof part !== "object" || part === null) return null;
+  const record = part as Record<string, unknown>;
+
+  const tool = typeof record["tool"] === "string" ? record["tool"].toLowerCase() : undefined;
+  if (!tool || !READ_TOOLS.has(tool)) return null;
+
+  const state = record["state"];
+  const input =
+    typeof state === "object" && state !== null
+      ? (state as Record<string, unknown>)["input"]
+      : record["input"];
+  if (typeof input !== "object" || input === null) return null;
+
+  for (const key of PATH_KEYS) {
+    const value = (input as Record<string, unknown>)[key];
+    if (typeof value === "string" && value.trim() !== "") return value;
+  }
+  return null;
+}
+
+/**
+ * Narrow a read list to the project-relative paths inside it.
+ *
+ * Absolute paths under the project root become relative; anything outside the
+ * project is dropped, both to keep the record portable across machines and to
+ * avoid writing a user's home directory layout into a committed state file.
+ */
+export function relativizeReads(paths: readonly string[], projectDir: string): string[] {
+  const root = resolve(projectDir);
+  const out = new Set<string>();
+
+  for (const path of paths) {
+    const absolute = isAbsolute(path) ? path : join(root, path);
+    const rel = relative(root, absolute);
+    if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) continue;
+    out.add(rel.split(sep).join("/"));
+  }
+
+  return [...out].sort();
+}
+
+/** Prefixes that hold the harness's writing guidance rather than the paper. */
+const GUIDANCE_PREFIXES = [".agents/skills/", ".agents/knowledge/", ".agents/vendor/"];
+
+/** The guidance subset of a read list — the files a stage was pointed at. */
+export function guidanceReads(paths: readonly string[]): string[] {
+  return paths.filter((path) => GUIDANCE_PREFIXES.some((prefix) => path.startsWith(prefix)));
 }

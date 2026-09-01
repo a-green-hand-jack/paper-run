@@ -17,6 +17,7 @@ export const STATE_FILES = {
   session: "session.json",
   assessment: "assessment.json",
   performance: "performance.json",
+  reviewFindings: "review-findings.json",
   publication: "publication.json",
 } as const;
 

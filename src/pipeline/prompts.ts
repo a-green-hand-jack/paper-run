@@ -68,6 +68,9 @@ export function renderStagePrompt(stage: Stage, ctx: PromptContext): string {
     );
   }
 
+  const reading = renderRequiredReading(stage);
+  if (reading.length > 0) sections.push("", ...reading);
+
   sections.push(
     "",
     "## Expected outputs",
@@ -129,9 +132,102 @@ export function renderSummaryRequest(stage: Stage): string {
   ].join("\n");
 }
 
+/**
+ * Render the prompt for one manuscript section inside a per-section stage.
+ *
+ * The owner skill is written for exactly this shape of task — one active
+ * section, its neighbours for continuity, and nothing else loaded. Naming the
+ * file and the section's number in the run lets the skill's own minimum-context
+ * rule apply, which it cannot when a single turn is asked for a whole paper.
+ */
+export function renderSectionPrompt(
+  stage: Stage,
+  ctx: PromptContext,
+  section: { path: string; index: number; total: number },
+): string {
+  const sections: string[] = [
+    `# Stage ${stageNumber(stage.id)}/${TOTAL_STAGES}: ${stage.name} — section ${section.index}/${section.total}`,
+    "",
+    `Draft \`${section.path}\`, and only that file.`,
+    "",
+    "Its job is defined by the row for this section in `PAPER.md` `### Section",
+    "responsibilities`, under the narrative arc agreed in `## Story and structure`.",
+  ];
+
+  if (ctx.materialVerdict) {
+    const note = materialNote(ctx.materialVerdict);
+    if (note) sections.push("", "## Material constraints", "", note);
+  }
+
+  if (stage.harnessSkill) {
+    const lines = [`Read \`${stage.harnessSkill}\` and follow it. It owns this task.`];
+    if (stage.sidecarSkills?.length) {
+      lines.push(
+        "",
+        "You may load these as sidecars alongside the owner skill, never instead of it:",
+        ...stage.sidecarSkills.map((skill) => `  - \`${skill}\``),
+      );
+    }
+    sections.push("", "## Method", "", ...lines);
+  }
+
+  const reading = renderRequiredReading(stage);
+  if (reading.length > 0) sections.push("", ...reading);
+
+  sections.push(
+    "",
+    "## This turn",
+    "",
+    `- Write ${section.path}. Do not draft, revise, or reorganise the other sections.`,
+    "- Load the neighbouring sections only as far as continuity requires.",
+    "- Keep terminology and notation consistent with `PAPER_INTERFACES.md`.",
+    "- Carry anything the evidence does not support as an explicit `% TODO(paper-run):` marker.",
+  );
+
+  if (ctx.humanGuidance) {
+    sections.push(
+      "",
+      "## Guidance from the human",
+      "",
+      ctx.humanGuidance,
+      "",
+      "Treat this as the priority for this turn.",
+    );
+  }
+
+  sections.push("", "## Ground rules", "", ...groundRules(ctx.mode));
+
+  return sections.join("\n");
+}
+
 // ---------------------------------------------------------------------------
 // Fragments
 // ---------------------------------------------------------------------------
+
+/**
+ * Name the guidance files this stage depends on.
+ *
+ * Phrased as an instruction rather than an invitation. The harness's own
+ * routing makes every reference optional — the vendored writing skill even
+ * tells the agent not to load its references "merely because they exist" —
+ * so a stage that needs them has to say so, which is exactly the signal that
+ * rule is asking for.
+ */
+function renderRequiredReading(stage: Stage): string[] {
+  if (!stage.requiredReading?.length) return [];
+
+  return [
+    "## Required reading",
+    "",
+    "Read these before you start. They are part of the method for this stage, not",
+    "optional background:",
+    "",
+    ...stage.requiredReading.map((path) => `- \`${path}\``),
+    "",
+    "If one of them is missing from this repository, say so in your summary rather",
+    "than proceeding as though you had read it.",
+  ];
+}
 
 function describeHistory(history: StageRecord[]): string {
   if (history.length === 0) return "";

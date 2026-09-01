@@ -14,9 +14,11 @@ permission:
     "*": allow
     ".git/**": deny
     ".agents/**": deny
+    ".agents/knowledge/venues/**": allow
     ".opencode/**": deny
     ".paper-run/**": deny
     ".paper-run/assessment.json": allow
+    ".paper-run/review-findings.json": allow
     "AGENTS.md": deny
     "Makefile": deny
     "opencode.json": deny
@@ -141,9 +143,39 @@ stop — do not pad.
   documentation written after the fact.
 - **`.agents/`** — the harness itself: skills, validators, tooling. The
   controller runs its scripts; do not run or edit them.
-- **`.paper-run/`** — controller state. Read it freely. The only file you may
-  write is a stage output the harness explicitly asks you to write (e.g.
-  `assessment.json`). Never hand-edit `run.json` or `stage-history.json`.
+- **`.paper-run/`** — controller state. Read it freely. The only files you may
+  write are stage outputs a prompt explicitly asks for: `assessment.json`, and
+  the `resolution` field of each finding in `review-findings.json` during
+  revision. Never hand-edit `run.json` or `stage-history.json`.
+- **`.agents/knowledge/venues/`** — the one writable place inside `.agents/`.
+  Positioning records the target venue here from the brief and the materials.
+  Mark every field you could not verify as `UNVERIFIED` rather than filling it
+  with a plausible date or page limit.
+
+## Required reading is not optional reading
+
+A stage prompt may list files under a **Required reading** heading. Those are
+part of the method, not background: the harness keeps its writing guidance
+several hops behind the owner skill, and a stage that names a file has already
+decided the work needs it. Read them before drafting.
+
+If a listed file does not exist in this repository, say so in your summary. Do
+not carry on as though you had read it.
+
+## Revision records its own outcome
+
+When you address independent-review findings, write the disposition back into
+`.paper-run/review-findings.json`. Each blocker and major finding needs a
+`resolution` object:
+
+```json
+{ "status": "fixed", "note": "rewrote the claim in 04_method.tex to match Table 2" }
+{ "status": "deferred", "note": "needs the ablation that EXPERIMENTS.md marks unresolved" }
+```
+
+`deferred` is a legitimate answer when the evidence cannot settle the point.
+Silence is not: the controller checks that every blocker and major finding has
+one or the other.
 
 ## Verify before you declare a stage done
 

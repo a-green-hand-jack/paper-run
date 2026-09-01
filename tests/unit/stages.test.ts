@@ -10,6 +10,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   existsSync,
+  readFileSync,
   chmodSync,
   mkdtempSync,
   mkdirSync,
@@ -33,6 +34,7 @@ import {
 import {
   renderStagePrompt,
   renderRemediationPrompt,
+  renderSectionPrompt,
   renderSummaryRequest,
 } from "../../src/pipeline/prompts.js";
 import {
@@ -222,6 +224,26 @@ describe.skipIf(!hasHarness)("harness references (checked against a real checkou
         expect(existsSync(path), `${stage.id} sidecar -> ${sidecar}`).toBe(true);
       }
     }
+  });
+
+  it("points every required-reading path at a file that exists", () => {
+    // Required reading is the whole point of the mechanism: a stage claims the
+    // agent must read a specific file. A path that has drifted sends the agent
+    // looking for guidance that is not there, which is worse than not asking.
+    for (const stage of Object.values(STAGES)) {
+      for (const path of stage.requiredReading ?? []) {
+        expect(existsSync(join(HARNESS_CHECKOUT, path)), `${stage.id} -> ${path}`).toBe(true);
+      }
+    }
+  });
+
+  it("keeps the drafting stage pointed at per-section guidance", () => {
+    // section-writing is written for one active section at a time; the stage
+    // is only allowed to claim perSection while the skill it loads agrees.
+    const drafting = STAGES.canonical_drafting;
+    expect(drafting.perSection).toBe(true);
+    const skill = readFileSync(join(HARNESS_CHECKOUT, drafting.harnessSkill!), "utf-8");
+    expect(skill).toContain("active section");
   });
 
   it("names only check scripts that exist", () => {
@@ -937,5 +959,81 @@ describe("validateStage", () => {
     expect(result.failures.join(" ")).toContain("exited with code 3");
     expect(result.failures.join(" ")).not.toContain("stdout-secret");
     expect(result.failures.join(" ")).not.toContain("stderr-secret");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Required reading and per-section prompts
+// ---------------------------------------------------------------------------
+
+describe("required reading", () => {
+  const ctx = { mode: "autonomous" as const, history: [] };
+
+  it("states the files as an instruction, not an invitation", () => {
+    const prompt = renderStagePrompt(STAGES.canonical_drafting, ctx);
+
+    expect(prompt).toContain("## Required reading");
+    expect(prompt).toContain("not");
+    expect(prompt).toContain(".agents/knowledge/scientific-writing.md");
+    // The point of the mechanism: the deepest guidance is named outright
+    // instead of being left behind two conditional hops.
+    expect(prompt).toContain("prose-quality-guardrails.md");
+  });
+
+  it("tells the agent to report a missing file rather than pretend", () => {
+    expect(renderStagePrompt(STAGES.story_outline, ctx)).toContain(
+      "say so in your summary rather",
+    );
+  });
+
+  it("omits the heading for a stage that names no reading", () => {
+    expect(renderStagePrompt(STAGES.bootstrap, ctx)).not.toContain("## Required reading");
+  });
+});
+
+describe("renderSectionPrompt", () => {
+  const ctx = { mode: "autonomous" as const, history: [] };
+  const section = { path: "paper/sections/04_method.tex", index: 3, total: 7 };
+
+  it("names the one file this turn is for", () => {
+    const prompt = renderSectionPrompt(STAGES.canonical_drafting, ctx, section);
+
+    expect(prompt).toContain("section 3/7");
+    expect(prompt).toContain("paper/sections/04_method.tex");
+    expect(prompt).toContain("Do not draft, revise, or reorganise the other sections");
+  });
+
+  it("points at the section responsibilities agreed earlier", () => {
+    const prompt = renderSectionPrompt(STAGES.canonical_drafting, ctx, section);
+    expect(prompt).toContain("Section");
+    expect(prompt).toContain("responsibilities");
+  });
+
+  it("carries the owner skill, required reading, and the fabrication rule", () => {
+    const prompt = renderSectionPrompt(STAGES.canonical_drafting, ctx, section);
+
+    expect(prompt).toContain(".agents/skills/section-writing/SKILL.md");
+    expect(prompt).toContain("## Required reading");
+    expect(prompt).toContain("Never invent facts");
+  });
+
+  it("passes on a partial material verdict", () => {
+    const prompt = renderSectionPrompt(
+      STAGES.canonical_drafting,
+      { ...ctx, materialVerdict: "partial" },
+      section,
+    );
+    expect(prompt).toContain("**partial**");
+    expect(prompt).toContain("TODO(paper-run)");
+  });
+
+  it("prioritises human guidance when a gate supplied it", () => {
+    const prompt = renderSectionPrompt(
+      STAGES.canonical_drafting,
+      { ...ctx, humanGuidance: "lead with the failure case" },
+      section,
+    );
+    expect(prompt).toContain("lead with the failure case");
+    expect(prompt).toContain("## Guidance from the human");
   });
 });

@@ -11,6 +11,7 @@ permission:
   edit:
     "*": deny
     ".paper-run/review-findings.md": allow
+    ".paper-run/review-findings.json": allow
   webfetch: deny
   bash: deny
 ---
@@ -76,8 +77,9 @@ you actually assessed and any missing evidence under `Not assessable`.
 ## What you must not do
 
 - **Do not edit the manuscript or contracts.** Not the LaTeX, not a typo. The
-  only file you may create or replace is `.paper-run/review-findings.md`; that
-  narrow write exists so the controller can validate and checkpoint the review.
+  only files you may create or replace are `.paper-run/review-findings.md` and
+  `.paper-run/review-findings.json`; those narrow writes exist so the controller
+  can validate and checkpoint the review.
 - **Do not fix problems in your report.** Say what is wrong and where. Do not
   supply the replacement sentence — a reviewer who drafts the patch has started
   writing the paper, and the next round of review is no longer independent.
@@ -86,11 +88,14 @@ you actually assessed and any missing evidence under `Not assessable`.
 
 Do not run shell commands. The controller performs validation after the review.
 
-## Report artifact
+## Report artifacts
 
-Write the report to `.paper-run/review-findings.md`. Each severity heading is
-mandatory; write `None.` under a heading when the review found nothing at that
-severity.
+You write the same review twice: once for a person, once for the controller.
+
+### 1. The report — `.paper-run/review-findings.md`
+
+Each severity heading is mandatory; write `None.` under a heading when the
+review found nothing at that severity.
 
 ```markdown
 ## Review summary
@@ -126,3 +131,38 @@ that the writer knows what you actually verified.>
 Use severity `blocker` (the paper is wrong or unsupported as it stands),
 `major` (a referee would raise this), or `minor` (clarity or polish). Order
 findings by severity, blockers first.
+
+### 2. The record — `.paper-run/review-findings.json`
+
+The same findings as data. This is what the revision stage is checked against:
+the controller requires every `blocker` and `major` finding to carry a
+resolution before revision can complete, so a finding you leave out of this file
+is a finding nobody has to answer.
+
+```json
+{
+  "schema_version": "paper-run-review-findings-v1",
+  "reviewed_at": "2026-01-01T00:00:00.000Z",
+  "findings": [
+    {
+      "id": "B1",
+      "severity": "blocker",
+      "location": "paper/sections/05_exp.tex, Table 2 discussion",
+      "summary": "The 12% improvement claim has no corresponding row in Table 2.",
+      "evidence": "Table 2 reports 3.4% and 5.1%; EXPERIMENTS.md records no 12% result."
+    }
+  ]
+}
+```
+
+Rules for the record:
+
+- `id` is short and stable (`B1`, `M2`, `m3`) and appears in the Markdown report
+  too, so a human reading one can find the other.
+- `severity` is exactly `blocker`, `major`, or `minor`.
+- `location` must be specific enough to act on — a file plus a section, table,
+  or quoted phrase.
+- Do not write a `resolution` field. That belongs to the revision stage.
+- An empty `findings` array is a valid record when the manuscript is sound.
+- Both files must describe the same findings. If they disagree, the JSON is what
+  the pipeline enforces, and the disagreement is your error.

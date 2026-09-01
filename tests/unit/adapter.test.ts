@@ -313,8 +313,14 @@ describe("isAdapterInstalled", () => {
       "utf-8",
     );
 
-    expect(reviewer).toContain('edit:\n    "*": deny\n    ".paper-run/review-findings.md": allow');
-    expect(reviewer).toContain("Write the report to `.paper-run/review-findings.md`");
+    expect(reviewer).toContain(
+      'edit:\n    "*": deny\n    ".paper-run/review-findings.md": allow\n    ".paper-run/review-findings.json": allow',
+    );
+    expect(reviewer).toContain("The report — `.paper-run/review-findings.md`");
+    // The structured record is what the revision stage is checked against, so
+    // the reviewer must be able to write it — and nothing else new.
+    expect(reviewer).toContain('"schema_version": "paper-run-review-findings-v1"');
+    expect(reviewer).toContain("Do not write a `resolution` field");
     expect(reviewer).not.toMatch(/edit:\s+allow/);
     expect(reviewer).toContain("bash: deny");
     expect(reviewer).not.toContain("python3 .agents/tools");
@@ -327,9 +333,14 @@ describe("isAdapterInstalled", () => {
     const config = readFileSync(join(tmpDir, "opencode.json"), "utf-8");
     const writerFrontmatter = writer.split("---")[1] ?? "";
 
+    // The two narrow allows inside otherwise-denied trees are deliberate:
+    // positioning records venue knowledge, revision records how it disposed of
+    // each review finding. Neither reaches skills, tools, or controller state.
     expect(writer).toContain(
-      'edit:\n    "*": allow\n    ".git/**": deny\n    ".agents/**": deny\n    ".opencode/**": deny\n    ".paper-run/**": deny\n    ".paper-run/assessment.json": allow\n    "AGENTS.md": deny\n    "Makefile": deny\n    "opencode.json": deny',
+      'edit:\n    "*": allow\n    ".git/**": deny\n    ".agents/**": deny\n    ".agents/knowledge/venues/**": allow\n    ".opencode/**": deny\n    ".paper-run/**": deny\n    ".paper-run/assessment.json": allow\n    ".paper-run/review-findings.json": allow\n    "AGENTS.md": deny\n    "Makefile": deny\n    "opencode.json": deny',
     );
+    expect(writer).not.toContain('".agents/tools/**": allow');
+    expect(writer).not.toContain('".agents/skills/**": allow');
     expect(writerFrontmatter).not.toContain("python3 .agents/");
     expect(writerFrontmatter).not.toContain("bash .agents/tools/");
     expect(writerFrontmatter).not.toContain("make *");

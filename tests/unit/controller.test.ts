@@ -1163,3 +1163,77 @@ describe("permissions", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Per-section drafting
+// ---------------------------------------------------------------------------
+
+describe("per-section drafting", () => {
+  function seedSections(names: string[]): void {
+    const dir = join(tmpDir, "paper", "sections");
+    mkdirSync(dir, { recursive: true });
+    for (const name of names) writeFileSync(join(dir, name), "% placeholder\n");
+  }
+
+  it("sends one turn per section instead of one turn for the manuscript", async () => {
+    seedSections(["02_intro.tex", "04_method.tex", "05_exp.tex"]);
+    writeRunState(tmpDir, makeRunState({ current_stage: "canonical_drafting" }));
+
+    const ac = new AbortController();
+    const client = mockClient({
+      onPrompt: (_text, turn) => {
+        // Let all three section turns be issued, then stop before validation.
+        if (turn >= 3) setTimeout(() => ac.abort(), 5);
+      },
+    });
+
+    const result = await makeController(client, "autonomous", ac.signal).run();
+    expect(result.status).toBe("interrupted");
+
+    const prompts: string[] = client._prompts;
+    expect(prompts).toHaveLength(3);
+    expect(prompts[0]).toContain("section 1/3");
+    expect(prompts[0]).toContain("paper/sections/02_intro.tex");
+    expect(prompts[1]).toContain("paper/sections/04_method.tex");
+    expect(prompts[2]).toContain("section 3/3");
+    expect(prompts[2]).toContain("paper/sections/05_exp.tex");
+
+    // Each turn is scoped to its own file rather than the whole draft.
+    for (const prompt of prompts) {
+      expect(prompt).toContain("Do not draft, revise, or reorganise the other sections");
+    }
+  });
+
+  it("falls back to a single turn when the section layout is missing", async () => {
+    writeRunState(tmpDir, makeRunState({ current_stage: "canonical_drafting" }));
+
+    const ac = new AbortController();
+    const client = mockClient({ onPrompt: () => setTimeout(() => ac.abort(), 5) });
+
+    await makeController(client, "autonomous", ac.signal).run();
+
+    const prompts: string[] = client._prompts;
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain("Stage 7/13");
+    expect(prompts[0]).not.toContain("section 1/");
+  });
+
+  it("names the required reading in every section turn", async () => {
+    seedSections(["02_intro.tex", "04_method.tex"]);
+    writeRunState(tmpDir, makeRunState({ current_stage: "canonical_drafting" }));
+
+    const ac = new AbortController();
+    const client = mockClient({
+      onPrompt: (_text, turn) => {
+        if (turn >= 2) setTimeout(() => ac.abort(), 5);
+      },
+    });
+
+    await makeController(client, "autonomous", ac.signal).run();
+
+    for (const prompt of client._prompts as string[]) {
+      expect(prompt).toContain("## Required reading");
+      expect(prompt).toContain(".agents/knowledge/scientific-writing.md");
+    }
+  });
+});
