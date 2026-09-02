@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { readFile } from "node:fs/promises";
 import {
   PAPER_RUN_DIR,
   STATE_FILES,
@@ -54,5 +55,20 @@ describe("constants", () => {
     // now enforces are unsatisfiable: the Draft citation-support profile
     // requires retrieved passages the writer has no way to fetch.
     expect(DEFAULT_TEMPLATE_VERSION).toBe("v0.3.1");
+  });
+});
+
+describe("the CLI's template default", () => {
+  it("is the pinned constant, not a second copy of it", async () => {
+    // The constant was bumped to v0.3.1 and the CLI option default was left at
+    // v0.3.0. Commander's default always wins, so every `paper-run init`
+    // silently fetched the older harness -- including the one whose supplied-
+    // bibliography citation fix was the whole point of the bump. Only a run
+    // pinned by hand got what the constant said it would.
+    const cli = await readFile(new URL("../../src/cli.ts", import.meta.url), "utf-8");
+    const hardcoded = cli.match(/"harness template version",\s*"v\d+\.\d+\.\d+"/g);
+
+    expect(hardcoded).toBeNull();
+    expect(cli).toContain('"harness template version", DEFAULT_TEMPLATE_VERSION');
   });
 });
