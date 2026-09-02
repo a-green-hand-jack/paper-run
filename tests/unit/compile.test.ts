@@ -219,3 +219,30 @@ describe("the manuscript_compiles validator", () => {
     expect(result.checks[0]!.message).toContain("paper/main.tex is missing");
   });
 });
+
+describe("a missing-graphic error carries its own fix", () => {
+  it("names the path that would work, not only the one that failed", async () => {
+    const { compileDraft } = await import("../../src/pipeline/compile.js");
+    // Exercised through the real error path: a manuscript whose figure
+    // reference is repository-relative rather than paper-relative.
+    writeFileSync(
+      join(tmpDir, "paper", "main.tex"),
+      [
+        "\\documentclass{article}",
+        "\\usepackage{graphicx}",
+        "\\begin{document}",
+        "\\includegraphics{paper/figures/teaser_figure.jpg}",
+        "\\end{document}",
+        "",
+      ].join("\n"),
+    );
+
+    const result = await compileDraft(tmpDir, { timeoutMs: 90_000 });
+
+    if (result.diagnostic === "latexmk is unavailable") return; // no toolchain here
+    expect(result.ok).toBe(false);
+    expect(result.diagnostic).toContain("not found");
+    expect(result.diagnostic).toContain("figures/teaser_figure.jpg");
+    expect(result.diagnostic).toContain("compiles from");
+  });
+});

@@ -210,9 +210,13 @@ function isPlaceholder(body: string, prose: string, stem: string): boolean {
   if (stem === TITLE_ANCHOR || /^1\d_/.test(stem)) return hasVisiblePlaceholder(prose);
 
   // `proseOnly` drops the command but keeps its argument, so a file holding
-  // only `\section{Conclusion}` arrives here as the word "Conclusion". A
-  // heading is not prose: subtract the titles the body declares.
-  const headings = [...body.matchAll(/\\(?:sub)*(?:section|paragraph)\*?\s*\{([^{}]*)\}/g)]
+  // only `\section{Conclusion}` arrives here as the word "Conclusion", and an
+  // empty `\begin{abstract}\end{abstract}` as "abstract" twice. Neither is
+  // prose: subtract the names the body declares before judging what is left.
+  const declared = [
+    ...body.matchAll(/\\(?:sub)*(?:section|paragraph)\*?\s*\{([^{}]*)\}/g),
+    ...body.matchAll(/\\(?:begin|end)\s*\{([^{}]*)\}/g),
+  ]
     .flatMap((match) => (match[1] ?? "").split(/[^A-Za-z]+/))
     .filter((word) => word.length > 0)
     .map((word) => word.toLowerCase());
@@ -223,8 +227,8 @@ function isPlaceholder(body: string, prose: string, stem: string): boolean {
     .filter((word) => word.length > 0);
 
   const remaining = [...words];
-  for (const heading of headings) {
-    const index = remaining.findIndex((word) => word.toLowerCase() === heading);
+  for (const name of declared) {
+    const index = remaining.findIndex((word) => word.toLowerCase() === name);
     if (index !== -1) remaining.splice(index, 1);
   }
 

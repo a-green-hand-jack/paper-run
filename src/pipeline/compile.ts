@@ -271,12 +271,27 @@ function transcriptOf(err: unknown): string {
   );
 }
 
-/** The first `! ...` TeX reports, which is the one that stopped the run. */
+/**
+ * The first `! ...` TeX reports, which is the one that stopped the run.
+ *
+ * A missing-graphic error gets the fix appended, because the message alone is
+ * not enough to act on: TeX names the path it could not find but not the path
+ * it would have accepted, and a run burned both remediation attempts moving a
+ * figure between two wrong prefixes.
+ */
 function firstLatexError(err: unknown): string {
-  const line = transcriptOf(err)
-    .split("\n")
-    .find((candidate) => candidate.startsWith("! "));
-  return line ? line.trim() : "the manuscript does not compile";
+  const transcript = transcriptOf(err);
+  const line = transcript.split("\n").find((candidate) => candidate.startsWith("! "));
+  if (!line) return "the manuscript does not compile";
+
+  const message = line.trim();
+  const graphic = message.match(/File `([^']+)' not found/);
+  if (graphic && /\.(pdf|png|jpe?g|eps|svg)$/i.test(graphic[1] ?? "")) {
+    return `${message} — the document compiles from \`paper/\`, so reference it as `
+      + `\`figures/${graphic[1]!.split("/").pop()}\``;
+  }
+
+  return message;
 }
 
 function profileBibliography(root: string): string | undefined {

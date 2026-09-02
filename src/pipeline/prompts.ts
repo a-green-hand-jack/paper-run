@@ -203,6 +203,13 @@ export function renderSectionPrompt(
     "- Load the neighbouring sections only as far as continuity requires.",
     "- Keep terminology and notation consistent with `PAPER_INTERFACES.md`.",
     "- Carry anything the evidence does not support as an explicit `% TODO(paper-run):` marker.",
+    // The manuscript compiles from `paper/`, so every path in it is relative
+    // to that directory, not to the repository root. A run spent both of its
+    // remediation attempts moving a figure between `../materials/figures/`
+    // and `paper/figures/` -- both wrong from `paper/` -- without landing on
+    // the one form that works.
+    "- Reference figures as `figures/<name>` and section files as `sections/<name>`:"
+      + " the document compiles from `paper/`, so a path starting `paper/` or `../` will not resolve.",
   );
 
   if (ctx.apparatus && ctx.apparatus.length > 0) {
