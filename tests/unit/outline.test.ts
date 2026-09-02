@@ -253,3 +253,68 @@ describe("reconcileMainTex", () => {
     expect(main()).not.toContain("ifPaperAcknowledgements");
   });
 });
+
+describe("conditionals in main.tex survive the rewrite", () => {
+  /** The template's own preamble and body, in the shape that broke. */
+  const TEMPLATE = [
+    "\\documentclass{article}",
+    "\\title{\\PaperTitle}",
+    "\\ifPaperAnonymous",
+    "  \\author{Anonymous Authors}",
+    "\\else",
+    "  \\author{\\PaperAuthors}",
+    "\\fi",
+    "\\begin{document}",
+    "\\input{sections/00_title}",
+    "\\input{sections/01_abstract}",
+    "\\input{sections/02_intro}",
+    "\\ifPaperAcknowledgements",
+    "\\input{sections/08_acknowledgement}",
+    "\\fi",
+    "\\appendix",
+    "\\input{sections/10_appendix}",
+    "\\end{document}",
+    "",
+  ].join("\n");
+
+  const PLAN = [
+    { title: "Title", stem: "00_title", readerTask: "" },
+    { title: "Abstract", stem: "01_abstract", readerTask: "" },
+    { title: "Introduction", stem: "02_intro", readerTask: "" },
+    { title: "Appendix", stem: "10_appendix", readerTask: "" },
+  ];
+
+  function rewrite(): string {
+    writeFileSync(join(tmpDir, "paper", "main.tex"), TEMPLATE);
+    reconcileMainTex(tmpDir, PLAN);
+    return readFileSync(join(tmpDir, "paper", "main.tex"), "utf-8");
+  }
+
+  it("keeps the \\fi closing a conditional that guards prose, not a section", () => {
+    // A two-line proximity window judged this \fi a section guard, because
+    // \input{sections/00_title} sat two lines below it, and dropped it. TeX
+    // answered "! Incomplete \iftrue; all text was ignored after line 15" and
+    // the drafting stage spent its remediation attempts on a file it had not
+    // written.
+    const out = rewrite();
+
+    expect(out).toContain("\\ifPaperAnonymous");
+    expect(out).toContain("\\author{Anonymous Authors}");
+    expect(out.split("\n").filter((line) => line.trim() === "\\fi")).toHaveLength(1);
+  });
+
+  it("leaves \\if and \\fi balanced", () => {
+    const out = rewrite();
+
+    expect((out.match(/\\if[a-zA-Z@]+/g) ?? []).length).toBe(
+      (out.match(/\\fi\b/g) ?? []).length,
+    );
+  });
+
+  it("still drops a guard whose only content was a dropped section", () => {
+    const out = rewrite();
+
+    expect(out).not.toContain("ifPaperAcknowledgements");
+    expect(out).not.toContain("08_acknowledgement");
+  });
+});

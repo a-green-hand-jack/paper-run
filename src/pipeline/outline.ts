@@ -247,12 +247,11 @@ function orderForDocument(sections: readonly PlannedSection[]): PlannedSection[]
 function rewriteInputs(main: string, ordered: readonly PlannedSection[]): string {
   const lines = main.split("\n");
   const isSectionInput = (line: string) => /\\input\s*\{sections\//.test(line);
-  const isGuard = (line: string) =>
-    /\\ifPaper[A-Za-z]*/.test(line) || /^\s*\\fi\s*$/.test(line);
-
   const appendixLine = lines.findIndex((line) => /\\appendix/.test(line));
   const body = ordered.filter((section) => section.stem.startsWith("0"));
   const appendix = ordered.filter((section) => section.stem.startsWith("1"));
+
+  const droppableGuards = guardLinesToDrop(lines);
 
   const kept: string[] = [];
   let bodyPlaced = false;
@@ -276,7 +275,7 @@ function rewriteInputs(main: string, ordered: readonly PlannedSection[]): string
 
     // A guard whose only purpose was wrapping a section input is dropped with
     // it; guards around anything else are left alone.
-    if (isGuard(line) && guardsOnlySectionInput(lines, index)) continue;
+    if (droppableGuards.has(index)) continue;
 
     kept.push(line);
   }
@@ -297,10 +296,75 @@ function rewriteInputs(main: string, ordered: readonly PlannedSection[]): string
   return kept.join("\n");
 }
 
-/** True when this guard line only ever wrapped section inputs. */
-function guardsOnlySectionInput(lines: readonly string[], index: number): boolean {
-  const window = lines.slice(Math.max(0, index - 2), index + 3);
-  return window.some((line) => /\\input\s*\{sections\//.test(line));
+/**
+ * Guard lines whose conditional wraps nothing but section inputs.
+ *
+ * The template guards its acknowledgements input with
+ * `\ifPaperAcknowledgements ... \fi`, and when the plan drops that section the
+ * guard has to go with it. A guard around anything else must survive intact.
+ *
+ * This used to be decided by a two-line proximity window, which cannot tell
+ * the two apart. On pwb-0011 it dropped the `\fi` closing the anonymous-author
+ * conditional purely because `\input{sections/00_title}` sat two lines below
+ * it, leaving `\ifPaperAnonymous` unterminated:
+ *
+ *     \ifPaperAnonymous
+ *       \author{Anonymous Authors}
+ *     \else
+ *       \author{\PaperAuthors}
+ *     \begin{document}          <- no \fi
+ *
+ * TeX answered `! Incomplete \iftrue; all text was ignored after line 15`,
+ * and the drafting stage spent its remediation attempts on a file it had not
+ * written and could not have fixed.
+ *
+ * So match the conditionals properly and judge each block by its contents.
+ */
+function guardLinesToDrop(lines: readonly string[]): Set<number> {
+  const isOpen = (line: string) =>
+    /^\s*\\if[a-zA-Z@]*\s*$/.test(line) || /^\s*\\if[a-zA-Z@]+\b/.test(line.trimEnd());
+  const isElse = (line: string) => /^\s*\\else\s*$/.test(line);
+  const isClose = (line: string) => /^\s*\\fi\s*$/.test(line);
+  const isSectionInput = (line: string) => /\\input\s*\{sections\//.test(line);
+  const isIgnorable = (line: string) => line.trim() === "" || line.trim().startsWith("%");
+
+  const drop = new Set<number>();
+  const open: { start: number; guards: number[]; inputs: number; other: number }[] = [];
+
+  for (const [index, line] of lines.entries()) {
+    if (isOpen(line) && !/\\newif/.test(line)) {
+      open.push({ start: index, guards: [index], inputs: 0, other: 0 });
+      continue;
+    }
+
+    const current = open.at(-1);
+    if (!current) continue;
+
+    if (isElse(line)) {
+      current.guards.push(index);
+      continue;
+    }
+
+    if (isClose(line)) {
+      current.guards.push(index);
+      open.pop();
+      // Droppable only when the block exists to carry section inputs and
+      // nothing else. An empty conditional is left alone: it is not ours.
+      if (current.inputs > 0 && current.other === 0) {
+        for (const guard of current.guards) drop.add(guard);
+      } else {
+        // Its contents survive, so an enclosing block has non-input content.
+        const parent = open.at(-1);
+        if (parent) parent.other += 1;
+      }
+      continue;
+    }
+
+    if (isSectionInput(line)) current.inputs += 1;
+    else if (!isIgnorable(line)) current.other += 1;
+  }
+
+  return drop;
 }
 
 // ---------------------------------------------------------------------------
