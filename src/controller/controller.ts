@@ -89,7 +89,7 @@ import {
   abortAndWaitForIdle,
   showToast,
   getSessionUsage,
-  getSessionReads,
+  getSessionReadProfile,
   relativizeReads,
   guidanceReads,
 } from "../opencode/session.js";
@@ -154,6 +154,9 @@ interface TurnTelemetry {
   telemetryAvailable: boolean;
   /** Project files the agent opened, relative to the project root. */
   filesRead: string[];
+  /** Read invocations, and the assistant messages that carried them. */
+  readCalls: number;
+  readBatches: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -907,10 +910,8 @@ export class PipelineController {
       const after = await getSessionUsage(this.opts.client, sessionId);
       // Which files the turn opened. Best-effort: a telemetry gap must never
       // fail a stage, so this returns an empty list rather than throwing.
-      const filesRead = relativizeReads(
-        await getSessionReads(this.opts.client, sessionId),
-        this.opts.projectDir,
-      );
+      const readProfile = await getSessionReadProfile(this.opts.client, sessionId);
+      const filesRead = relativizeReads(readProfile.paths, this.opts.projectDir);
       this.turnTelemetry = {
         sessionId,
         startedAt: new Date(startedAt).toISOString(),
@@ -919,6 +920,8 @@ export class PipelineController {
         usage: usageDelta(before, after),
         telemetryAvailable: before !== null && after !== null,
         filesRead,
+        readCalls: readProfile.calls,
+        readBatches: readProfile.batches,
       };
       this.activeSessionId = this.opts.sessionId;
     }
@@ -1356,6 +1359,9 @@ export class PipelineController {
             guidance_read: guidanceReads(turn.filesRead),
           }
         : {}),
+      ...(turn.readCalls > 0
+        ? { read_calls: turn.readCalls, read_batches: turn.readBatches }
+        : {}),
     });
     try {
       writePerformance(this.opts.projectDir, performance);
@@ -1481,6 +1487,8 @@ function mergeTelemetry(
     },
     telemetryAvailable: base.telemetryAvailable && next.telemetryAvailable,
     filesRead: [...new Set([...base.filesRead, ...next.filesRead])].sort(),
+    readCalls: base.readCalls + next.readCalls,
+    readBatches: base.readBatches + next.readBatches,
   };
 }
 

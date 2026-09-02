@@ -165,6 +165,15 @@ const AttemptPerformanceSchema = z.object({
   files_read: z.array(z.string().min(1)).optional(),
   /** The subset of `files_read` that is harness writing guidance. */
   guidance_read: z.array(z.string().min(1)).optional(),
+  /**
+   * Read invocations, and the assistant messages that carried them.
+   *
+   * `files_read` deduplicates, so it cannot tell a stage that opened one file
+   * forty times from one that opened it once. Their ratio -- calls per batch
+   * -- is what governs cost, because every tool call re-sends the transcript.
+   */
+  read_calls: z.number().int().nonnegative().optional(),
+  read_batches: z.number().int().nonnegative().optional(),
 });
 
 export const PerformanceSchema = z.object({

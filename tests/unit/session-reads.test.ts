@@ -12,6 +12,7 @@ import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 
 import {
   getSessionReads,
+  getSessionReadProfile,
   relativizeReads,
   guidanceReads,
 } from "../../src/opencode/session.js";
@@ -111,5 +112,45 @@ describe("guidanceReads", () => {
       ".agents/skills/section-writing/SKILL.md",
       ".agents/vendor/ccfa-skills/ccf-paper-writer/references/section-modules.md",
     ]);
+  });
+});
+
+describe("getSessionReadProfile", () => {
+  it("counts every read call and the messages that carried them", async () => {
+    // Two messages: one that read three files in a single turn, one that read
+    // a single file. Four calls across two batches.
+    const client = {
+      session: {
+        messages: async () => ({
+          data: [
+            {
+              parts: [
+                { tool: "read", state: { input: { filePath: "/p/PAPER.md" } } },
+                { tool: "read", state: { input: { filePath: "/p/EXPERIMENTS.md" } } },
+                { tool: "read", state: { input: { filePath: "/p/BRIEF.md" } } },
+              ],
+            },
+            { parts: [{ tool: "read", state: { input: { filePath: "/p/PAPER.md" } } }] },
+          ],
+        }),
+      },
+    } as never;
+
+    const profile = await getSessionReadProfile(client, "ses_1");
+
+    expect(profile.calls).toBe(4);
+    expect(profile.batches).toBe(2);
+    // The deduplicated view cannot see the difference: three paths, four reads.
+    expect(profile.paths).toEqual(["/p/BRIEF.md", "/p/EXPERIMENTS.md", "/p/PAPER.md"]);
+  });
+
+  it("reports nothing rather than throwing when the transcript is unreadable", async () => {
+    const client = { session: { messages: async () => ({ error: "nope" }) } } as never;
+
+    expect(await getSessionReadProfile(client, "ses_1")).toEqual({
+      paths: [],
+      calls: 0,
+      batches: 0,
+    });
   });
 });
