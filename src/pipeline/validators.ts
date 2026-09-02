@@ -451,11 +451,17 @@ async function runValidator(
       }
 
       recordMeasuredPages(projectDir, null);
+      // The generic fallback repeats the validator's own message; saying it
+      // twice tells the reader nothing and hides that we have no detail.
+      const detail =
+        result.diagnostic && result.diagnostic !== "the manuscript does not compile"
+          ? `: ${result.diagnostic}`
+          : "";
       return {
         name: "manuscript-compiles",
         passed: false,
         required: validator.required,
-        message: `${validator.message}: ${result.diagnostic}`,
+        message: `${validator.message}${detail}`,
       };
     }
 

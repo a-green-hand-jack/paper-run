@@ -16,6 +16,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 
 import {
@@ -295,5 +296,22 @@ describe("a compile diagnostic survives TeX's own line wrapping", () => {
 
     expect(message).toBe("! Undefined control sequence.");
     expect(message).not.toContain("compiles from");
+  });
+});
+
+describe("a draft compile does not inherit the previous attempt's failure", () => {
+  it("forces a full rebuild rather than trusting latexmk's recorder database", async () => {
+    // latexmk keeps a .fdb_latexmk in its output directory. Without -g it
+    // answered "Nothing to do" and replayed the bibtex error from an earlier,
+    // since-repaired attempt -- so a revision stage was blocked with "the
+    // manuscript does not compile" about a document that compiled to nine
+    // pages by hand.
+    const source = await readFile(
+      new URL("../../src/pipeline/compile.ts", import.meta.url),
+      "utf-8",
+    );
+    const args = source.slice(source.indexOf('execa("latexmk"'), source.indexOf('"-pdf"'));
+
+    expect(args).toContain('"-g"');
   });
 });

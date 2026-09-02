@@ -57,13 +57,28 @@ export async function compileDraft(
     return { ok: false, pages: null, diagnostic: "paper/main.tex is missing" };
   }
 
+  // A fresh build directory every time. latexmk records a failed rule in its
+  // `.fdb_latexmk` database and then refuses to proceed on later runs -- "Nothing
+  // to do ... all targets are up-to-date", exit 12, citing an error in a
+  // *previous* invocation. Once the supplied bibliography made bibtex complain
+  // once, every subsequent compile inherited that verdict and reported a
+  // healthy manuscript as broken, with no `!` line to explain why. Keeping
+  // stale state was never worth the seconds it saved.
   const outDir = join(root, DRAFT_BUILD_DIR);
+  rmSync(outDir, { recursive: true, force: true });
   mkdirSync(outDir, { recursive: true });
 
   const run = (tolerant: boolean) =>
     execa("latexmk", [
       "-norc",
       "-no-shell-escape",
+      // Force a full rebuild. latexmk keeps a recorder database in the output
+      // directory and will otherwise report "Nothing to do" plus the error
+      // from a *previous* invocation -- so a manuscript that has since been
+      // repaired still reads as broken. A blocked run was told "the
+      // manuscript does not compile" about a document that compiled to nine
+      // pages by hand. `buildPublicationArtifacts` has always passed this.
+      "-g",
       "-pdf",
       "-jobname=draft-preview",
       `-outdir=${outDir}`,
@@ -88,7 +103,6 @@ export async function compileDraft(
     });
 
   const pdf = join(outDir, "draft-preview.pdf");
-  rmSync(pdf, { force: true });
 
   let warning: string | undefined;
   try {
@@ -296,7 +310,15 @@ export function latexDiagnostic(err: unknown): string {
 function firstLatexError(err: unknown): string {
   const transcript = transcriptOf(err);
   const line = transcript.split("\n").find((candidate) => candidate.startsWith("! "));
-  if (!line) return "the manuscript does not compile";
+  if (!line) {
+    // No TeX error means the failure came from the build tool, not the
+    // document. Report what it said rather than the tautology the writer
+    // cannot act on.
+    const summary = transcript
+      .split("\n")
+      .find((candidate) => /^\s*\w[^:]*:\s*(gave an error|Bibtex errors|failed)/i.test(candidate));
+    return summary ? `build tooling reported: ${summary.trim()}` : "the manuscript does not compile";
+  }
 
   const message = line.trim();
 
