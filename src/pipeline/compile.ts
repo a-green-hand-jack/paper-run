@@ -74,7 +74,17 @@ export async function compileDraft(
       cwd: paperDir,
       timeout: options.timeoutMs ?? 4 * 60_000,
       ...(options.signal ? { cancelSignal: options.signal } : {}),
-      env: { ...process.env, openin_any: "p", openout_any: "p", shell_escape: "f" },
+      env: {
+        ...process.env,
+        openin_any: "p",
+        openout_any: "p",
+        shell_escape: "f",
+        // TeX wraps its output at 79 columns by default, which cuts its own
+        // error messages mid-word: a real run received "File `x.jpg' not f"
+        // and the matcher below never fired, so the guidance appended to it
+        // never reached the agent. Widen the line so a diagnostic survives.
+        max_print_line: "1000",
+      },
     });
 
   const pdf = join(outDir, "draft-preview.pdf");
@@ -279,16 +289,35 @@ function transcriptOf(err: unknown): string {
  * it would have accepted, and a run burned both remediation attempts moving a
  * figure between two wrong prefixes.
  */
+export function latexDiagnostic(err: unknown): string {
+  return firstLatexError(err);
+}
+
 function firstLatexError(err: unknown): string {
   const transcript = transcriptOf(err);
   const line = transcript.split("\n").find((candidate) => candidate.startsWith("! "));
   if (!line) return "the manuscript does not compile";
 
   const message = line.trim();
-  const graphic = message.match(/File `([^']+)' not found/);
+
+  // Match against the de-wrapped transcript as well as the raw line. TeX wraps
+  // at 79 columns by inserting a newline *without* a space, so "not found"
+  // arrives as "not f\nound" -- joining the lines with nothing restores the
+  // original stream. Older runs, and any writer ignoring `max_print_line`,
+  // still produce this, and it hid the guidance below from a real run exactly
+  // when it was needed.
+  const flattened = transcript.replace(/\r?\n/g, "");
+  const graphic =
+    message.match(/File [`'"]([^`'"]+)['"`] not found/)
+    ?? flattened.match(/File [`'"]([^`'"]+)['"`] not found/);
+
   if (graphic && /\.(pdf|png|jpe?g|eps|svg)$/i.test(graphic[1] ?? "")) {
-    return `${message} — the document compiles from \`paper/\`, so reference it as `
-      + `\`figures/${graphic[1]!.split("/").pop()}\``;
+    const name = graphic[1]!.split("/").pop();
+    const shown = message.length >= 78 && !/ not found/.test(message)
+      ? `! Package pdftex.def Error: File \`${graphic[1]}\` not found`
+      : message;
+    return `${shown} — the document compiles from \`paper/\`, so reference it as `
+      + `\`figures/${name}\``;
   }
 
   return message;

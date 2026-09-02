@@ -20,6 +20,7 @@ import { tmpdir } from "node:os";
 
 import {
   suppliedBibliographyComplaint,
+  latexDiagnostic,
   lastMeasuredPages,
   recordMeasuredPages,
   DRAFT_BUILD_DIR,
@@ -244,5 +245,55 @@ describe("a missing-graphic error carries its own fix", () => {
     expect(result.diagnostic).toContain("not found");
     expect(result.diagnostic).toContain("figures/teaser_figure.jpg");
     expect(result.diagnostic).toContain("compiles from");
+  });
+});
+
+describe("a compile diagnostic survives TeX's own line wrapping", () => {
+  // Verbatim from the run that blocked: TeX wraps at 79 columns, so its error
+  // line is cut mid-word. The matcher looking for "not found" on that line
+  // never fired, the guidance was never appended, and both remediation
+  // attempts guessed the path wrong -- first `../materials/figures/...`, then
+  // `paper/figures/...`, when the answer was `figures/...`.
+  const WRAPPED = {
+    stdout: [
+      "(./sections/02_intro.tex",
+      "! Package pdftex.def Error: File `../materials/figures/teaser_figure.jpg' not f",
+      "ound: using draft setting.",
+      "",
+      "See the pdftex.def package documentation for explanation.",
+    ].join("\n"),
+    stderr: "",
+    exitCode: 1,
+  };
+
+  const UNWRAPPED = {
+    stdout: "! Package pdftex.def Error: File `paper/figures/plot.jpg' not found: using draft setting.",
+    stderr: "",
+    exitCode: 1,
+  };
+
+  it("names the path the document should use, even when the error line is cut", () => {
+    const message = latexDiagnostic(WRAPPED);
+
+    expect(message).toContain("compiles from `paper/`");
+    expect(message).toContain("figures/teaser_figure.jpg");
+  });
+
+  it("names it for an unwrapped error too", () => {
+    const message = latexDiagnostic(UNWRAPPED);
+
+    expect(message).toContain("compiles from `paper/`");
+    expect(message).toContain("figures/plot.jpg");
+  });
+
+  it("leaves an unrelated error alone", () => {
+    const message = latexDiagnostic({
+      stdout: "! Undefined control sequence.\nl.42 \\nosuchmacro",
+      stderr: "",
+      exitCode: 1,
+    });
+
+    expect(message).toBe("! Undefined control sequence.");
+    expect(message).not.toContain("compiles from");
   });
 });
