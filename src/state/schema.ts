@@ -180,6 +180,25 @@ export type Performance = z.infer<typeof PerformanceSchema>;
 export type AttemptPerformance = z.infer<typeof AttemptPerformanceSchema>;
 
 // ---------------------------------------------------------------------------
+// inputs.json
+// ---------------------------------------------------------------------------
+
+/**
+ * Digests of the materials a run was given, captured before any writing.
+ *
+ * Supplied inputs are evidence, not workspace. Recording them lets the
+ * controller check that a turn fixed the manuscript rather than editing the
+ * evidence until the checks agreed with it.
+ */
+export const InputBaselineSchema = z.object({
+  schema_version: z.literal("paper-run-inputs-v1"),
+  captured_at: z.string().datetime(),
+  files: z.record(z.string().min(1), z.string().regex(/^sha256:[0-9a-f]{64}$/)),
+});
+
+export type InputBaseline = z.infer<typeof InputBaselineSchema>;
+
+// ---------------------------------------------------------------------------
 // review-findings.json
 // ---------------------------------------------------------------------------
 
@@ -264,6 +283,27 @@ const CriterionSchema = z.object({
   evidence: z.string(),
 });
 
+/**
+ * One claim the evidence cannot carry, and where it bites.
+ *
+ * A `partial` verdict used to be a single global instruction telling the writer
+ * to mark everything it was unsure of. On pwb-0011 the actual gap was two
+ * missing models out of five, and the paper came back with a 49-word related
+ * work section and TODO markers in every file. A limit that cannot name what it
+ * limits is not a limit.
+ */
+export const ScopeLimitSchema = z.object({
+  id: z.string().min(1),
+  /** The specific overreaching claim. */
+  claim: z.string().min(1),
+  /** What is missing that would support it. */
+  evidence_gap: z.string().min(1),
+  /** Sections or contract headings the limit touches. */
+  applies_to: z.array(z.string().min(1)).min(1),
+});
+
+export type ScopeLimit = z.infer<typeof ScopeLimitSchema>;
+
 export const AssessmentSchema = z.object({
   schema_version: z.literal("paper-run-assessment-v1"),
   verdict: MaterialVerdict,
@@ -274,6 +314,14 @@ export const AssessmentSchema = z.object({
   blockers: z.array(z.string()),
   assessed_files: z.array(z.string()),
   assessed_at: z.string().datetime(),
+  /**
+   * Claim-level limits behind a `partial` verdict.
+   *
+   * Optional rather than defaulted so an assessment written before scoping
+   * still parses; the absence is meaningful and the prompt says what to do
+   * with it.
+   */
+  scope_limits: z.array(ScopeLimitSchema).optional(),
 });
 
 export type Assessment = z.infer<typeof AssessmentSchema>;

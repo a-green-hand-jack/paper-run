@@ -66,15 +66,40 @@ export type Validator =
   | { type: "prose_quality"; dir?: string; required: boolean; message: string }
   /** PAPER.md's section responsibilities table yields a usable manuscript outline. */
   | { type: "section_plan"; required: boolean; message: string }
+  /**
+   * The manuscript cites the literature it was given.
+   *
+   * The floor is derived from the bibliography's own size, so a repository
+   * without one is unaffected. `minFiles` additionally requires the citations
+   * to be spread across sections rather than piled into one.
+   */
+  | { type: "citation_floor"; minFiles?: number; required: boolean; message: string }
+  /** Supplied figure assets are placed in the manuscript, or explained. */
+  | { type: "figure_coverage"; required: boolean; message: string }
+  /** The manuscript is within reach of the venue's page budget. */
+  | { type: "manuscript_length"; required: boolean; message: string }
+  /** Supplied inputs are byte-identical to what the run started with. */
+  | { type: "inputs_unmodified"; required: boolean; message: string }
   /** The reviewer left machine-readable findings, not only a prose report. */
   | { type: "review_findings"; required: boolean; message: string }
-  /** Findings at these severities were each fixed or explicitly deferred. */
+  /**
+   * Findings at these severities were each fixed or explicitly deferred.
+   *
+   * `maxDeferred` caps how many may be deferred per severity. A documented
+   * deferral is a legitimate outcome for a finding the evidence cannot settle,
+   * but on pwb-0011 it was also a free exit: two blockers and the finding that
+   * the paper cited nothing were all deferred, and the stage passed. A severity
+   * capped at zero cannot be deferred at all.
+   */
   | {
       type: "findings_addressed";
       severities: readonly string[];
+      maxDeferred?: Readonly<Record<string, number>>;
       required: boolean;
       message: string;
-    };
+    }
+  /** The findings file still says what the reviewer said. */
+  | { type: "findings_integrity"; required: boolean; message: string };
 
 export interface Stage {
   id: StageId;
@@ -309,6 +334,35 @@ export const STAGES: Record<StageId, Stage> = {
         required: true,
         message: "Paper interface macros are missing or inconsistent",
       },
+      {
+        type: "inputs_unmodified",
+        required: true,
+        message: "Supplied inputs were modified",
+      },
+      // A supplied figure that the paper neither places nor argues against is
+      // a figure nobody decided about.
+      {
+        type: "figure_coverage",
+        required: true,
+        message: "Supplied figures are missing from the manuscript",
+      },
+      // Only checked when a human actually stated a budget; silent otherwise.
+      {
+        type: "manuscript_length",
+        required: true,
+        message: "The manuscript is far short of its stated page budget",
+      },
+      // Advisory until the harness can accept a citation without retrieved
+      // passages. Today `check-reference-integrity.py` errors on every cited
+      // key that has no ledger record, and the writer cannot create one -- so
+      // requiring citations here and integrity later would deadlock the run.
+      // Promoted to required with the upstream fix.
+      {
+        type: "citation_floor",
+        minFiles: 3,
+        required: false,
+        message: "The manuscript cites too little of the bibliography it was given",
+      },
       // Advisory: mechanical tells, not a verdict on the argument.
       {
         type: "prose_quality",
@@ -373,6 +427,17 @@ export const STAGES: Record<StageId, Stage> = {
         required: false,
         message: "BibTeX formatting issues remain",
       },
+      {
+        type: "inputs_unmodified",
+        required: true,
+        message: "Supplied inputs were modified",
+      },
+      {
+        type: "citation_floor",
+        minFiles: 3,
+        required: false,
+        message: "The manuscript cites too little of the bibliography it was given",
+      },
     ],
     timeoutMs: 20 * MINUTES,
     retries: 2,
@@ -407,6 +472,17 @@ export const STAGES: Record<StageId, Stage> = {
         args: ["--profile", "draft"],
         required: true,
         message: "Draft reference and claim-evidence integrity check failed",
+      },
+      {
+        type: "inputs_unmodified",
+        required: true,
+        message: "Supplied inputs were modified",
+      },
+      // A review turn must not shrink the paper below the floor it reached.
+      {
+        type: "manuscript_length",
+        required: true,
+        message: "Self review left the manuscript short of its stated page budget",
       },
       {
         type: "prose_quality",
@@ -503,8 +579,41 @@ export const STAGES: Record<StageId, Stage> = {
       {
         type: "findings_addressed",
         severities: ["blocker", "major"],
+        // A blocker cannot be deferred. If the evidence genuinely cannot
+        // settle it, that is a run that should stop and say so, not one that
+        // ships a candidate with the objection filed away.
+        maxDeferred: { blocker: 0, major: 2 },
         required: true,
         message: "Review findings were left unaddressed",
+      },
+      // Revision needs write access to record how it disposed of each finding,
+      // and that access is equally sufficient to soften a blocker into a minor
+      // note. Nothing else stops it.
+      {
+        type: "findings_integrity",
+        required: true,
+        message: "The review findings were altered after the review",
+      },
+      {
+        type: "inputs_unmodified",
+        required: true,
+        message: "Supplied inputs were modified",
+      },
+      {
+        type: "figure_coverage",
+        required: true,
+        message: "Supplied figures are missing from the revised manuscript",
+      },
+      {
+        type: "manuscript_length",
+        required: true,
+        message: "Revision left the manuscript short of its stated page budget",
+      },
+      {
+        type: "citation_floor",
+        minFiles: 3,
+        required: false,
+        message: "The revised manuscript cites too little of the bibliography it was given",
       },
       {
         type: "prose_quality",
@@ -574,6 +683,11 @@ export const STAGES: Record<StageId, Stage> = {
         script: "check-paper-contracts.py",
         required: true,
         message: "Paper contracts failed structural validation",
+      },
+      {
+        type: "inputs_unmodified",
+        required: true,
+        message: "Supplied inputs were modified",
       },
     ],
     timeoutMs: 20 * MINUTES,

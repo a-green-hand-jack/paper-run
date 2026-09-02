@@ -40,6 +40,8 @@ import {
   writeStageHistory,
   readPerformance,
   writePerformance,
+  readInputBaseline,
+  writeInputBaseline,
 } from "../state/store.js";
 import {
   RunStateSchema,
@@ -56,6 +58,7 @@ import { remainingStages, stageNumber, TOTAL_STAGES } from "../pipeline/stages.j
 import type { Stage } from "../pipeline/stages.js";
 import { renderStagePrompt, renderRemediationPrompt, renderSectionPrompt } from "../pipeline/prompts.js";
 import { readPlannedSections, planIssues, reconcileMainTex } from "../pipeline/outline.js";
+import { captureInputBaseline } from "../pipeline/inputs.js";
 import {
   buildPublicationArtifacts,
   capturePublicationBaseline,
@@ -92,6 +95,7 @@ import {
 import type { SessionUsageSnapshot } from "../opencode/session.js";
 import { waitForIdle } from "../opencode/events.js";
 import type { RelevantEvent } from "../opencode/events.js";
+import type { ScopeLimit } from "../state/schema.js";
 
 import {
   checkDirtyState,
@@ -160,6 +164,8 @@ export class PipelineController {
   private policy: GatePolicy;
   /** Verdict from the material assessment, once it has run. */
   private materialVerdict: Verdict | undefined;
+  /** The claims that verdict actually restricts, if any. */
+  private materialLimits: readonly ScopeLimit[] = [];
   /** Session currently running a turn, so an interrupt reaches cold reviews too. */
   private activeSessionId: string;
   /** Stage associated with the turn currently being driven. */
@@ -186,6 +192,7 @@ export class PipelineController {
       });
     }
     this.materialVerdict = this.recoverVerdict();
+    this.materialLimits = this.recoverLimits();
 
     // A run parked on a stage this version no longer runs is readable but not
     // resumable: reinterpreting its position against a different pipeline
@@ -365,6 +372,13 @@ export class PipelineController {
     }
 
     // --- stage-specific post-processing ---
+    if (stage.id === "bootstrap" && readInputBaseline(this.opts.projectDir) === null) {
+      // Before any stage has had the chance to be helpful with them.
+      const baseline = captureInputBaseline(this.opts.projectDir);
+      writeInputBaseline(this.opts.projectDir, baseline);
+      log.info(`  recorded ${Object.keys(baseline.files).length} supplied input(s)`);
+    }
+
     if (stage.id === "material_assessment") {
       const stop = await this.applyAssessment(stage, startedAt, contractBaseline);
       if (stop) {
@@ -760,6 +774,7 @@ export class PipelineController {
       mode: this.policy.mode,
       history: this.history().stages,
       ...(this.materialVerdict ? { materialVerdict: this.materialVerdict } : {}),
+      ...(this.materialLimits.length > 0 ? { materialLimits: this.materialLimits } : {}),
       ...(guidance ? { humanGuidance: guidance } : {}),
     };
 
@@ -834,6 +849,7 @@ export class PipelineController {
       mode: this.policy.mode,
       history: this.history().stages,
       ...(this.materialVerdict ? { materialVerdict: this.materialVerdict } : {}),
+      ...(this.materialLimits.length > 0 ? { materialLimits: this.materialLimits } : {}),
       ...(guidance ? { humanGuidance: guidance } : {}),
     });
   }
@@ -1028,6 +1044,7 @@ export class PipelineController {
   ): Promise<{ status: "stopped"; reason: string } | null> {
     const outcome = evaluateAssessment(this.opts.projectDir);
     this.materialVerdict = outcome.verdict;
+    this.materialLimits = outcome.assessment?.scope_limits ?? [];
 
     if (outcome.downgradedFrom && outcome.verdict) {
       await showToast(this.opts.client, {
@@ -1292,6 +1309,15 @@ export class PipelineController {
       log.warn(`Could not persist performance telemetry: ${describeError(error)}`);
     }
     this.turnTelemetry = undefined;
+  }
+
+  /** The scoped limits recorded with the assessment, if it has run. */
+  private recoverLimits(): readonly ScopeLimit[] {
+    try {
+      return evaluateAssessment(this.opts.projectDir).assessment?.scope_limits ?? [];
+    } catch {
+      return [];
+    }
   }
 
   /** Recover the material verdict from history when resuming a run. */

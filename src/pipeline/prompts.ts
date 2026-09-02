@@ -15,6 +15,7 @@
 import type { Stage } from "./stages.js";
 import { stageNumber, TOTAL_STAGES } from "./stages.js";
 import type { StageRecord } from "../state/schema.js";
+import type { ScopeLimit } from "../state/schema.js";
 import type { Mode } from "../utils/constants.js";
 
 export interface PromptContext {
@@ -23,6 +24,8 @@ export interface PromptContext {
   history: StageRecord[];
   /** Material verdict, once assessed — it changes how the agent must write. */
   materialVerdict?: "usable" | "partial" | "unusable";
+  /** The claims a `partial` verdict actually restricts. */
+  materialLimits?: readonly ScopeLimit[];
   /** Findings from a prior attempt, when this is a remediation turn. */
   validationFailures?: string[];
   /** Free-text guidance the human gave at a gate. */
@@ -43,7 +46,7 @@ export function renderStagePrompt(stage: Stage, ctx: PromptContext): string {
   if (priorWork) sections.push("", "## Where the run stands", "", priorWork);
 
   if (ctx.materialVerdict) {
-    const note = materialNote(ctx.materialVerdict);
+    const note = materialNote(ctx.materialVerdict, ctx.materialLimits ?? []);
     if (note) sections.push("", "## Material constraints", "", note);
   }
 
@@ -155,7 +158,7 @@ export function renderSectionPrompt(
   ];
 
   if (ctx.materialVerdict) {
-    const note = materialNote(ctx.materialVerdict);
+    const note = materialNote(ctx.materialVerdict, ctx.materialLimits ?? []);
     if (note) sections.push("", "## Material constraints", "", note);
   }
 
@@ -244,20 +247,55 @@ function describeHistory(history: StageRecord[]): string {
   return ["Completed so far:", ...lines].join("\n");
 }
 
-function materialNote(verdict: "usable" | "partial" | "unusable"): string {
+/**
+ * What a material verdict means for this turn.
+ *
+ * A `partial` verdict once expanded into a global instruction: write what the
+ * evidence supports and mark everything else. On pwb-0011 the gap was two
+ * missing models out of five, and the paper came back with a 49-word related
+ * work section and TODO markers in every file — the writer read "some claims
+ * cannot be supported" as "hedge the paper". So a limit now has to name the
+ * claim it limits, and everything unnamed is written normally.
+ */
+function materialNote(
+  verdict: "usable" | "partial" | "unusable",
+  limits: readonly ScopeLimit[] = [],
+): string {
   switch (verdict) {
-    case "partial":
-      return [
-        "The material assessment returned **partial**. Some claims cannot be supported by",
-        "what is available. Write what the evidence supports, and carry everything else as",
-        "an explicit `% TODO(paper-run):` marker. Do not paper over a gap with hedged",
-        "language that reads as though the evidence exists.",
-      ].join("\n");
     case "unusable":
       return [
         "The material assessment returned **unusable**. Manuscript work must not proceed.",
         "If you have been asked to draft, stop and report the block instead.",
       ].join("\n");
+
+    case "partial": {
+      if (limits.length === 0) {
+        return [
+          "The material assessment returned **partial** but recorded no scoped limits.",
+          "Treat the materials as usable: write the paper in full, and record any gap you",
+          "actually hit as a specific `% TODO(paper-run):` at the point it occurs.",
+        ].join("\n");
+      }
+
+      return [
+        "The material assessment returned **partial**. These specific claims are the ones",
+        "the evidence cannot carry:",
+        "",
+        ...limits.map(
+          (limit) =>
+            `- **${limit.claim}** — ${limit.evidence_gap} (affects ${limit.applies_to.join(", ")})`,
+        ),
+        "",
+        "Do not make those claims, and do not hedge them into sounding supported: state the",
+        "narrower thing the evidence does support, or mark the gap with an explicit",
+        "`% TODO(paper-run):` where it arises.",
+        "",
+        "**Everything not listed above is supported by the materials.** Write it in full,",
+        "without hedging and without markers. A partial verdict limits these claims; it is",
+        "not licence to defer a section, a citation, or a figure.",
+      ].join("\n");
+    }
+
     case "usable":
       return "";
   }

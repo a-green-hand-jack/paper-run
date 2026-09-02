@@ -141,6 +141,61 @@ describe("findings_addressed", () => {
   });
 });
 
+describe("the deferral cap", () => {
+  const CAPPED: Validator = {
+    type: "findings_addressed",
+    severities: ["blocker", "major"],
+    maxDeferred: { blocker: 0, major: 2 },
+    required: true,
+    message: "findings left unaddressed",
+  };
+
+  it("refuses a deferred blocker, however well documented", async () => {
+    // pwb-0011 deferred two blockers and the finding that the paper cited
+    // nothing, and the stage passed. A blocker the evidence cannot settle is a
+    // run that should stop and say so, not one that files the objection away.
+    writeFindings([
+      { ...BLOCKER, resolution: { status: "deferred", note: "the materials cannot settle this" } },
+    ]);
+
+    const result = await validateStage(stageWith(CAPPED), tmpDir);
+    expect(result.passed).toBe(false);
+    expect(result.failures.join(" ")).toContain("cannot be deferred");
+    expect(result.failures.join(" ")).toContain("B1");
+  });
+
+  it("accepts a fixed blocker", async () => {
+    writeFindings([
+      { ...BLOCKER, resolution: { status: "fixed", note: "rewrote the claim to match Table 2" } },
+    ]);
+    expect((await validateStage(stageWith(CAPPED), tmpDir)).passed).toBe(true);
+  });
+
+  it("allows major findings to be deferred up to the cap", async () => {
+    const deferred = (id: string) => ({
+      ...BLOCKER,
+      id,
+      severity: "major",
+      resolution: { status: "deferred", note: "needs the ablation EXPERIMENTS.md marks unresolved" },
+    });
+
+    writeFindings([deferred("M1"), deferred("M2")]);
+    expect((await validateStage(stageWith(CAPPED), tmpDir)).passed).toBe(true);
+
+    writeFindings([deferred("M1"), deferred("M2"), deferred("M3")]);
+    const result = await validateStage(stageWith(CAPPED), tmpDir);
+    expect(result.passed).toBe(false);
+    expect(result.failures.join(" ")).toContain("exceeds the cap of 2");
+  });
+
+  it("leaves callers without a cap behaving as before", async () => {
+    writeFindings([
+      { ...BLOCKER, resolution: { status: "deferred", note: "documented" } },
+    ]);
+    expect((await validateStage(stageWith(ADDRESSED), tmpDir)).passed).toBe(true);
+  });
+});
+
 describe("prose_quality validator", () => {
   it("reports mechanical prose without blocking, since it ships advisory", async () => {
     const sections = join(tmpDir, "paper", "sections");

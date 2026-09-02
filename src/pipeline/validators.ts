@@ -17,11 +17,20 @@ import { basename, dirname, isAbsolute, join, posix, relative, resolve, win32 } 
 import { execa } from "execa";
 
 import { runCheck } from "../harness/harness.js";
-import { PAPER_RUN_DIR } from "../utils/constants.js";
+import { PAPER_RUN_DIR, STATE_FILES } from "../utils/constants.js";
 import { log } from "../utils/logger.js";
 import { readPublication, readReviewFindings, writePublication } from "../state/store.js";
+import { ReviewFindingsSchema } from "../state/schema.js";
 import { inspectManuscript, blockingProseIssues, summarizeProseReport } from "./prose-quality.js";
 import { readPlannedSections, planIssues } from "./outline.js";
+import {
+  inspectManuscriptSources,
+  citationFloor,
+  pageBudget,
+  wordTarget,
+  graphicIsPlaced,
+} from "./manuscript.js";
+import { readInputBaseline } from "../state/store.js";
 
 import type { Stage, Validator } from "./stages.js";
 
@@ -191,6 +200,103 @@ async function runValidator(
       };
     }
 
+    case "citation_floor": {
+      const stats = inspectManuscriptSources(projectDir);
+      const floor = citationFloor(stats);
+      const problems: string[] = [];
+
+      if (stats.citedKeys.length < floor) {
+        problems.push(
+          `cites ${stats.citedKeys.length} distinct works; the ${stats.bibKeys.length}-entry bibliography sets a floor of ${floor}`,
+        );
+      }
+      if (stats.undefinedKeys.length > 0) {
+        problems.push(`cites keys absent from the bibliography: ${stats.undefinedKeys.slice(0, 5).join(", ")}`);
+      }
+      const minFiles = validator.minFiles ?? 0;
+      if (floor > 0 && minFiles > 0 && stats.filesWithCitations < minFiles) {
+        problems.push(
+          `citations appear in ${stats.filesWithCitations} section file(s); at least ${minFiles} should engage the literature`,
+        );
+      }
+
+      return {
+        name: "citation-floor",
+        passed: problems.length === 0,
+        required: validator.required,
+        message: problems.length === 0 ? undefined : `${validator.message}: ${problems.join("; ")}`,
+      };
+    }
+
+    case "figure_coverage": {
+      const stats = inspectManuscriptSources(projectDir);
+      // Nothing supplied means nothing to place.
+      if (stats.figureAssets.length === 0) {
+        return { name: "figure-coverage", passed: true, required: validator.required };
+      }
+
+      const missing = stats.figureAssets.filter(
+        (asset) => !graphicIsPlaced(asset, stats.includedGraphics),
+      );
+
+      // An asset the paper does not want is fine, provided the contract says so
+      // where a human reviewing the paper will encounter it.
+      const excused = unresolvedMentions(projectDir).join(" ");
+      const unexplained = missing.filter(
+        (asset) => !excused.includes(asset.replace(/\.[^.]+$/, "")),
+      );
+
+      return {
+        name: "figure-coverage",
+        passed: unexplained.length === 0,
+        required: validator.required,
+        message:
+          unexplained.length === 0
+            ? undefined
+            : `${validator.message}: ${unexplained.length} supplied figure(s) neither placed nor recorded under PAPER.md ## Unresolved: ${unexplained.slice(0, 4).join(", ")}`,
+      };
+    }
+
+    case "manuscript_length": {
+      const pages = pageBudget(projectDir);
+      if (pages === null) {
+        // No stated budget is "no check", not a failing check.
+        return { name: "manuscript-length", passed: true, required: false };
+      }
+      const stats = inspectManuscriptSources(projectDir);
+      const band = wordTarget(pages);
+      const passed = stats.words >= band.min;
+
+      return {
+        name: "manuscript-length",
+        passed,
+        required: validator.required,
+        message: passed
+          ? undefined
+          : `${validator.message}: ${stats.words} words of prose against a ${pages}-page budget (expected at least ${band.min})`,
+      };
+    }
+
+    case "inputs_unmodified": {
+      const outcome = checkInputsUnmodified(projectDir);
+      return {
+        name: "inputs-unmodified",
+        passed: outcome.passed,
+        required: validator.required,
+        message: outcome.passed ? undefined : `${validator.message}: ${outcome.detail}`,
+      };
+    }
+
+    case "findings_integrity": {
+      const outcome = await checkFindingsIntegrity(projectDir);
+      return {
+        name: "findings-integrity",
+        passed: outcome.passed,
+        required: validator.required,
+        message: outcome.passed ? undefined : `${validator.message}: ${outcome.detail}`,
+      };
+    }
+
     case "review_findings": {
       let outcome: { passed: boolean; detail: string };
       try {
@@ -210,7 +316,11 @@ async function runValidator(
     }
 
     case "findings_addressed": {
-      const outcome = checkFindingsAddressed(projectDir, validator.severities);
+      const outcome = checkFindingsAddressed(
+        projectDir,
+        validator.severities,
+        validator.maxDeferred,
+      );
       return {
         name: "findings-addressed",
         passed: outcome.passed,
@@ -235,6 +345,58 @@ async function runValidator(
 // Helpers
 // ---------------------------------------------------------------------------
 
+
+/**
+ * Supplied inputs must be byte-identical to what the run started with.
+ *
+ * A remediation turn is told to fix the named checks, and on pwb-0011 one did
+ * exactly that by editing a file the task had declared read-only — adding a
+ * marker to the supplied bibliography so a validator would stop complaining.
+ * It chose the shortest path to a satisfied checker over preserving the
+ * evidence. Permissions block the obvious cases; this catches the rest, and
+ * makes the boundary a checked property rather than an instruction.
+ *
+ * Passes when no baseline was recorded, so runs that predate it are unaffected.
+ */
+function checkInputsUnmodified(projectDir: string): { passed: boolean; detail: string } {
+  let baseline;
+  try {
+    baseline = readInputBaseline(projectDir);
+  } catch (err) {
+    return { passed: false, detail: `input baseline is unreadable: ${describe(err)}` };
+  }
+  if (!baseline) return { passed: true, detail: "no input baseline was recorded" };
+
+  const root = resolve(projectDir);
+  const changed: string[] = [];
+  const removed: string[] = [];
+
+  for (const [relative, expected] of Object.entries(baseline.files)) {
+    const path = join(root, relative);
+    if (!existsSync(path)) {
+      removed.push(relative);
+      continue;
+    }
+    let actual: string;
+    try {
+      actual = `sha256:${createHash("sha256").update(readFileSync(path)).digest("hex")}`;
+    } catch {
+      changed.push(relative);
+      continue;
+    }
+    if (actual !== expected) changed.push(relative);
+  }
+
+  if (changed.length === 0 && removed.length === 0) {
+    return { passed: true, detail: `${Object.keys(baseline.files).length} supplied input(s) unchanged` };
+  }
+
+  const parts: string[] = [];
+  if (changed.length > 0) parts.push(`modified: ${changed.slice(0, 5).join(", ")}`);
+  if (removed.length > 0) parts.push(`removed: ${removed.slice(0, 5).join(", ")}`);
+  return { passed: false, detail: parts.join("; ") };
+}
+
 /**
  * Every finding at the given severities must have been disposed of.
  *
@@ -251,6 +413,7 @@ async function runValidator(
 function checkFindingsAddressed(
   projectDir: string,
   severities: readonly string[],
+  maxDeferred?: Readonly<Record<string, number>>,
 ): { passed: boolean; detail: string } {
   let findings;
   try {
@@ -268,6 +431,30 @@ function checkFindingsAddressed(
     (finding) => wanted.has(finding.severity) && !finding.resolution,
   );
 
+  // A deferral is a legitimate outcome for a finding the evidence cannot
+  // settle. It stops being legitimate when it is the cheapest way past a
+  // stage, so each severity carries a budget.
+  if (outstanding.length === 0 && maxDeferred) {
+    const overCap: string[] = [];
+    for (const [severity, cap] of Object.entries(maxDeferred)) {
+      const deferred = findings.findings.filter(
+        (finding) => finding.severity === severity && finding.resolution?.status === "deferred",
+      );
+      if (deferred.length > cap) {
+        const named = deferred
+          .slice(0, 4)
+          .map((finding) => `${finding.id} (${finding.location})`)
+          .join("; ");
+        overCap.push(
+          cap === 0
+            ? `${severity} findings cannot be deferred: ${named}`
+            : `${deferred.length} deferred ${severity} findings exceeds the cap of ${cap}: ${named}`,
+        );
+      }
+    }
+    if (overCap.length > 0) return { passed: false, detail: overCap.join(" | ") };
+  }
+
   if (outstanding.length === 0) {
     const covered = findings.findings.filter((finding) => wanted.has(finding.severity)).length;
     return { passed: true, detail: `${covered} finding(s) addressed` };
@@ -282,6 +469,89 @@ function checkFindingsAddressed(
     passed: false,
     detail: `${outstanding.length} finding(s) have no resolution: ${named}${more}`,
   };
+}
+
+/**
+ * Figure names mentioned under `PAPER.md ## Unresolved`.
+ *
+ * Deciding against a supplied figure is legitimate. Doing it silently is what
+ * the coverage check is for, so the excuse has to be written where a human
+ * reviewing the paper will encounter it.
+ */
+function unresolvedMentions(projectDir: string): string[] {
+  const path = join(resolve(projectDir), "PAPER.md");
+  if (!existsSync(path)) return [];
+  let markdown: string;
+  try {
+    markdown = readFileSync(path, "utf-8");
+  } catch {
+    return [];
+  }
+
+  const start = markdown.indexOf("## Unresolved");
+  if (start === -1) return [];
+  const rest = markdown.slice(start + 1);
+  const end = rest.indexOf("\n## ");
+  const section = end === -1 ? rest : rest.slice(0, end);
+
+  return [...section.matchAll(/[\w./-]+\.(?:pdf|png|jpe?g|eps|svg)|\b[a-z0-9_-]{3,}\b/gi)].map(
+    (match) => match[0].replace(/\.[^.]+$/, "").split("/").pop() ?? match[0],
+  );
+}
+
+/**
+ * The findings file still describes the review that produced it.
+ *
+ * Comparing against the copy committed at the review's own checkpoint makes
+ * `resolution` the only field a revision may add. Without it, the cheapest way
+ * past a blocker is to stop calling it one.
+ */
+async function checkFindingsIntegrity(
+  projectDir: string,
+): Promise<{ passed: boolean; detail: string }> {
+  let current;
+  try {
+    current = readReviewFindings(projectDir);
+  } catch (err) {
+    return { passed: false, detail: `review-findings.json is unreadable: ${describe(err)}` };
+  }
+  if (!current) return { passed: true, detail: "no structured findings were recorded" };
+
+  let reviewed;
+  try {
+    const { stdout } = await execa(
+      "git",
+      ["show", `HEAD:${PAPER_RUN_DIR}/${STATE_FILES.reviewFindings}`],
+      { cwd: resolve(projectDir) },
+    );
+    reviewed = ReviewFindingsSchema.parse(JSON.parse(stdout));
+  } catch {
+    // Nothing committed to compare against: either the review has not been
+    // checkpointed yet, or this run predates structured findings.
+    return { passed: true, detail: "no committed findings to compare against" };
+  }
+
+  const before = new Map(reviewed.findings.map((finding) => [finding.id, finding]));
+  const problems: string[] = [];
+
+  for (const finding of current.findings) {
+    const original = before.get(finding.id);
+    if (!original) {
+      problems.push(`${finding.id} was added after the review`);
+      continue;
+    }
+    for (const field of ["severity", "location", "summary"] as const) {
+      if (finding[field] !== original[field]) {
+        problems.push(`${finding.id} had its ${field} changed after the review`);
+      }
+    }
+    before.delete(finding.id);
+  }
+  for (const id of before.keys()) problems.push(`${id} was removed after the review`);
+
+  return problems.length === 0
+    ? { passed: true, detail: `${current.findings.length} finding(s) intact` }
+    : { passed: false, detail: problems.slice(0, 5).join("; ") };
 }
 
 function describe(err: unknown): string {

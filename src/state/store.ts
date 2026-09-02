@@ -33,9 +33,10 @@ import {
   AssessmentSchema,
   PerformanceSchema,
   ReviewFindingsSchema,
+  InputBaselineSchema,
   PublicationSchema,
 } from "./schema.js";
-import type { RunState, GatePolicy, StageHistory, SessionState, Assessment, Performance, Publication, ReviewFindings } from "./schema.js";
+import type { RunState, GatePolicy, StageHistory, SessionState, Assessment, Performance, Publication, ReviewFindings, InputBaseline } from "./schema.js";
 
 const STATE_LOCK_FILE = "state.lock";
 const STATE_LOCK_TIMEOUT_MS = 5_000;
@@ -363,6 +364,22 @@ export function readAssessment(projectDir: string): Assessment | null {
   const path = statePath(projectDir, STATE_FILES.assessment);
   if (!existsSync(path)) return null;
   return readJson(path, AssessmentSchema, STATE_FILES.assessment);
+}
+
+// ---------------------------------------------------------------------------
+// inputs.json
+// ---------------------------------------------------------------------------
+
+/** Read the recorded input digests, or null for a run captured before them. */
+export function readInputBaseline(projectDir: string): InputBaseline | null {
+  const path = statePath(projectDir, STATE_FILES.inputs);
+  if (!existsSync(path)) return null;
+  return readJson(path, InputBaselineSchema, STATE_FILES.inputs);
+}
+
+export function writeInputBaseline(projectDir: string, baseline: InputBaseline): void {
+  InputBaselineSchema.parse(baseline);
+  writeJson(statePath(projectDir, STATE_FILES.inputs), baseline);
 }
 
 // ---------------------------------------------------------------------------
