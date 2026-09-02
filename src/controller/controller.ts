@@ -57,6 +57,7 @@ import { resolveStageTimeoutMultiplier } from "../state/timeout.js";
 import { remainingStages, stageNumber, TOTAL_STAGES } from "../pipeline/stages.js";
 import type { Stage } from "../pipeline/stages.js";
 import { renderStagePrompt, renderRemediationPrompt, renderSectionPrompt } from "../pipeline/prompts.js";
+import { readSetupInventory } from "../pipeline/apparatus.js";
 import { readPlannedSections, planIssues, reconcileMainTex } from "../pipeline/outline.js";
 import { captureInputBaseline } from "../pipeline/inputs.js";
 import {
@@ -772,11 +773,13 @@ export class PipelineController {
       return [this.buildStagePrompt(stage, guidance)];
     }
 
+    const apparatus = readSetupInventory(this.opts.projectDir);
     const ctx = {
       mode: this.policy.mode,
       history: this.history().stages,
       ...(this.materialVerdict ? { materialVerdict: this.materialVerdict } : {}),
       ...(this.materialLimits.length > 0 ? { materialLimits: this.materialLimits } : {}),
+      ...(apparatus.length > 0 ? { apparatus } : {}),
       ...(guidance ? { humanGuidance: guidance } : {}),
     };
 

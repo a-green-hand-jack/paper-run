@@ -24,6 +24,14 @@ import { ReviewFindingsSchema } from "../state/schema.js";
 import { inspectManuscript, blockingProseIssues, summarizeProseReport } from "./prose-quality.js";
 import { readPlannedSections, planIssues } from "./outline.js";
 import {
+  readSetupInventory,
+  excusedApparatus,
+  inventoryIssues,
+  uncitedApparatus,
+  INVENTORY_HEADING,
+} from "./apparatus.js";
+import { discoverMaterials } from "./material-assessment.js";
+import {
   inspectManuscriptSources,
   citationFloor,
   pageBudget,
@@ -225,6 +233,68 @@ async function runValidator(
         passed: problems.length === 0,
         required: validator.required,
         message: problems.length === 0 ? undefined : `${validator.message}: ${problems.join("; ")}`,
+      };
+    }
+
+    case "setup_inventory": {
+      // A repository with no supplied materials has no apparatus to enumerate.
+      // The check goes quiet rather than demanding an inventory of nothing.
+      const materials = discoverMaterials(projectDir).filter(
+        (path) => !path.endsWith(".md") || path.startsWith("materials/"),
+      );
+      if (materials.length === 0) {
+        return { name: "setup-inventory", passed: true, required: validator.required };
+      }
+
+      const entities = readSetupInventory(projectDir);
+      if (entities.length === 0) {
+        return {
+          name: "setup-inventory",
+          passed: false,
+          required: validator.required,
+          message:
+            `${validator.message}: EXPERIMENTS.md ${INVENTORY_HEADING} is missing or holds no table`,
+        };
+      }
+
+      const stats = inspectManuscriptSources(projectDir);
+      const issues = inventoryIssues(entities, stats.bibKeys, validator.minEntities ?? 3);
+
+      return {
+        name: "setup-inventory",
+        passed: issues.length === 0,
+        required: validator.required,
+        message: issues.length === 0 ? undefined : `${validator.message}: ${issues.join("; ")}`,
+      };
+    }
+
+    case "apparatus_cited": {
+      const entities = readSetupInventory(projectDir);
+      // Nothing enumerated means nothing owed. `setup_inventory` is the check
+      // that an inventory exists; this one only reads it.
+      if (entities.length === 0) {
+        return { name: "apparatus-cited", passed: true, required: validator.required };
+      }
+
+      const stats = inspectManuscriptSources(projectDir);
+      const owed = uncitedApparatus(
+        entities,
+        stats.citedKeys,
+        stats.bibKeys,
+        excusedApparatus(projectDir),
+      );
+
+      return {
+        name: "apparatus-cited",
+        passed: owed.length === 0,
+        required: validator.required,
+        message:
+          owed.length === 0
+            ? undefined
+            : `${validator.message}: ${owed.length} of ${entities.length} apparatus entit`
+              + `${owed.length === 1 ? "y is" : "ies are"} named in the setup inventory but never `
+              + `cited in the manuscript: `
+              + owed.map((entity) => `${entity.name} (${entity.bibKey})`).join(", "),
       };
     }
 

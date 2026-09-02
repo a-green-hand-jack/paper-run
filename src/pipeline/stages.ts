@@ -76,6 +76,23 @@ export type Validator =
   | { type: "citation_floor"; minFiles?: number; required: boolean; message: string }
   /** Supplied figure assets are placed in the manuscript, or explained. */
   | { type: "figure_coverage"; required: boolean; message: string }
+  /**
+   * The plan enumerated the experimental apparatus it read out of the materials.
+   *
+   * `minEntities` is the floor on how many models, datasets, benchmarks,
+   * metrics, tools, and calibration sets the inventory names. The check is
+   * silent for a project with no supplied materials to enumerate.
+   */
+  | { type: "setup_inventory"; minEntities?: number; required: boolean; message: string }
+  /**
+   * Every apparatus entity with a bibliography key is cited, or excused.
+   *
+   * The floor `citation_floor` puts under the count; this puts one under the
+   * coverage. pwb-0011 cleared a count floor of eleven with twenty-two keys
+   * and still cited three works in Experiments, because nothing asked whether
+   * the paper cited the benchmarks it ran on.
+   */
+  | { type: "apparatus_cited"; required: boolean; message: string }
   /** The manuscript is within reach of the venue's page budget. */
   | { type: "manuscript_length"; required: boolean; message: string }
   /** Supplied inputs are byte-identical to what the run started with. */
@@ -236,6 +253,14 @@ export const STAGES: Record<StageId, Stage> = {
       "The section responsibilities table is the manuscript's outline — drafting builds "
         + "exactly the sections it lists, so include one the venue needs even when the "
         + "template ships no file for it, and leave out template sections this paper does not want",
+      "EXPERIMENTS.md ## Experimental setup inventory: a Markdown table with columns "
+        + "Entity | Kind | Evidence | Bib key, enumerating every model, dataset, benchmark, "
+        + "metric, tool, framework, and calibration set the supplied code, configs, and scripts "
+        + "actually name — read them, do not infer from the result tables, whose column headers "
+        + "aggregate what the code names individually",
+      "Each inventory row cites the material file it was read from, and carries the "
+        + "bibliography key for that work when the supplied bibliography has one; leave the key "
+        + "column empty rather than guessing",
       "A venue knowledge file under .agents/knowledge/venues/ for the target venue, "
         + "filled from the brief and materials with every unverified field marked UNVERIFIED",
       "Anything genuinely undecided left under ## Unresolved rather than invented",
@@ -272,6 +297,18 @@ export const STAGES: Record<StageId, Stage> = {
         type: "section_plan",
         required: true,
         message: "PAPER.md ### Section responsibilities does not yield a usable outline",
+      },
+      // The apparatus channel. A results table bounds what the paper may
+      // claim; it does not bound what the paper must describe. On pwb-0011
+      // the supplied table's header read "Benchmark Average" and the
+      // manuscript wrote "benchmark-average accuracy" -- while the five
+      // benchmark names, the eval harness, and the serving engine sat in the
+      // supplied code, which the run read and never wrote from.
+      {
+        type: "setup_inventory",
+        minEntities: 3,
+        required: true,
+        message: "The experimental setup inventory is missing or unusable",
       },
       {
         type: "check_script",
@@ -315,6 +352,10 @@ export const STAGES: Record<StageId, Stage> = {
       "Draft prose for every section named in PAPER.md ### Section responsibilities",
       "A complete manuscript, not a skeleton: use the venue's page budget rather than stopping early",
       "Citations placed from the bibliography the repository already contains, using keys that exist in it",
+      "The experimental section names and cites every entity in EXPERIMENTS.md "
+        + "## Experimental setup inventory that carries a bibliography key — the benchmarks "
+        + "the models were evaluated on, the harness that ran them, the frameworks they were "
+        + "served with, the corpora used for calibration",
       "Every supplied figure and table either placed in the manuscript or recorded under PAPER.md ## Unresolved with a reason",
       "Every unsupported statement carried as an explicit % TODO(paper-run): marker",
       "No invented numbers, results, or citations under any circumstance",
@@ -362,6 +403,15 @@ export const STAGES: Record<StageId, Stage> = {
         minFiles: 3,
         required: false,
         message: "The manuscript cites too little of the bibliography it was given",
+      },
+      // Coverage, where citation_floor is count. A manuscript can clear a
+      // floor of eleven with twenty-two keys piled into related work and
+      // still cite three works in its experimental section, which is what
+      // pwb-0011 did against a ground truth that cites twenty-one there.
+      {
+        type: "apparatus_cited",
+        required: true,
+        message: "The manuscript does not cite the apparatus it says it used",
       },
       // Advisory: mechanical tells, not a verdict on the argument.
       {
@@ -614,6 +664,13 @@ export const STAGES: Record<StageId, Stage> = {
         minFiles: 3,
         required: false,
         message: "The revised manuscript cites too little of the bibliography it was given",
+      },
+      // Regression guard: the review half must not be able to hand back a
+      // manuscript that quietly dropped an apparatus citation.
+      {
+        type: "apparatus_cited",
+        required: true,
+        message: "The manuscript does not cite the apparatus it says it used",
       },
       {
         type: "prose_quality",

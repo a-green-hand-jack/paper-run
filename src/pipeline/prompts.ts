@@ -17,6 +17,8 @@ import { stageNumber, TOTAL_STAGES } from "./stages.js";
 import type { StageRecord } from "../state/schema.js";
 import type { ScopeLimit } from "../state/schema.js";
 import type { Mode } from "../utils/constants.js";
+import type { SetupEntity } from "./apparatus.js";
+import { describeInventory } from "./apparatus.js";
 
 export interface PromptContext {
   mode: Mode;
@@ -26,6 +28,15 @@ export interface PromptContext {
   materialVerdict?: "usable" | "partial" | "unusable";
   /** The claims a `partial` verdict actually restricts. */
   materialLimits?: readonly ScopeLimit[];
+  /**
+   * The experimental apparatus the plan enumerated.
+   *
+   * Repeated into drafting because it is the one thing a section writer cannot
+   * recover from the results tables: the benchmarks, harness, frameworks, and
+   * corpora live in the supplied code, and their names are what carry roughly
+   * half of a real paper's citations.
+   */
+  apparatus?: readonly SetupEntity[];
   /** Findings from a prior attempt, when this is a remediation turn. */
   validationFailures?: string[];
   /** Free-text guidance the human gave at a gate. */
@@ -193,6 +204,23 @@ export function renderSectionPrompt(
     "- Keep terminology and notation consistent with `PAPER_INTERFACES.md`.",
     "- Carry anything the evidence does not support as an explicit `% TODO(paper-run):` marker.",
   );
+
+  if (ctx.apparatus && ctx.apparatus.length > 0) {
+    sections.push(
+      "",
+      "## Experimental apparatus",
+      "",
+      "`EXPERIMENTS.md` `## Experimental setup inventory` records what this work ran on:",
+      "",
+      ...describeInventory(ctx.apparatus),
+      "",
+      "Where this section describes what was measured, name these by name and cite the key.",
+      "A results table's column header aggregates what the code names individually — writing",
+      "the header back out is not a description of the setup. Every entity with a key must be",
+      "cited somewhere in the manuscript, or recorded under `PAPER.md` `## Unresolved` with a",
+      "reason. Do not cite a key for an entity this paper did not actually use.",
+    );
+  }
 
   if (ctx.humanGuidance) {
     sections.push(
