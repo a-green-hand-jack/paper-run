@@ -318,3 +318,75 @@ describe("conditionals in main.tex survive the rewrite", () => {
     expect(out).not.toContain("08_acknowledgement");
   });
 });
+
+describe("conditional guards in main.tex", () => {
+  it("keeps a \\fi that closes a conditional wrapping something other than sections", () => {
+    // The template opens with an authorship conditional whose \fi sits two
+    // lines above \input{sections/00_title}. A proximity test dropped it,
+    // leaving \ifPaperAnonymous unterminated: every manuscript then failed
+    // with "! Incomplete \iftrue", invisible until something compiled it.
+    writeFileSync(
+      join(tmpDir, "paper", "main.tex"),
+      [
+        "\\documentclass{article}",
+        "\\title{\\PaperTitle}",
+        "\\ifPaperAnonymous",
+        "  \\author{Anonymous Authors}",
+        "\\else",
+        "  \\author{\\PaperAuthors}",
+        "\\fi",
+        "\\begin{document}",
+        "\\input{sections/00_title}",
+        "\\input{sections/01_abstract}",
+        "\\input{sections/02_intro}",
+        "\\ifPaperFullAppendix",
+        "  \\appendix",
+        "  \\input{sections/10_appendix}",
+        "\\fi",
+        "\\end{document}",
+        "",
+      ].join("\n"),
+    );
+
+    reconcileMainTex(tmpDir, [
+      { title: "Introduction", stem: "02_intro", readerTask: "motivate" },
+    ]);
+
+    const main = readFileSync(join(tmpDir, "paper", "main.tex"), "utf-8");
+    const opens = (main.match(/\\ifPaper[A-Za-z]*/g) ?? []).length;
+    const closes = (main.match(/^\s*\\fi\s*$/gm) ?? []).length;
+
+    expect(opens).toBe(closes);
+    expect(main).toContain("\\ifPaperAnonymous");
+    expect(main).toContain("\\author{\\PaperAuthors}");
+  });
+
+  it("drops a guard whose whole body was a section the plan left out", () => {
+    writeFileSync(
+      join(tmpDir, "paper", "main.tex"),
+      [
+        "\\begin{document}",
+        "\\input{sections/00_title}",
+        "\\input{sections/01_abstract}",
+        "\\input{sections/02_intro}",
+        "\\ifPaperAcknowledgements",
+        "  \\input{sections/08_acknowledgement}",
+        "\\fi",
+        "\\input{sections/10_appendix}",
+        "\\end{document}",
+        "",
+      ].join("\n"),
+    );
+
+    reconcileMainTex(tmpDir, [
+      { title: "Introduction", stem: "02_intro", readerTask: "motivate" },
+    ]);
+
+    const main = readFileSync(join(tmpDir, "paper", "main.tex"), "utf-8");
+    expect(main).not.toContain("ifPaperAcknowledgements");
+    expect(main).not.toContain("08_acknowledgement");
+    expect((main.match(/\\ifPaper[A-Za-z]*/g) ?? []).length).toBe(
+      (main.match(/^\s*\\fi\s*$/gm) ?? []).length,
+    );
+  });
+});

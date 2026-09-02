@@ -59,7 +59,7 @@ import type { Stage } from "../pipeline/stages.js";
 import { renderStagePrompt, renderRemediationPrompt, renderSectionPrompt } from "../pipeline/prompts.js";
 import { readSetupInventory } from "../pipeline/apparatus.js";
 import { readPlannedSections, planIssues, reconcileMainTex } from "../pipeline/outline.js";
-import { captureInputBaseline } from "../pipeline/inputs.js";
+import { captureInputBaseline, reconcileReferenceIntegrityAdoption } from "../pipeline/inputs.js";
 import {
   buildPublicationArtifacts,
   capturePublicationBaseline,
@@ -383,6 +383,13 @@ export class PipelineController {
       const baseline = captureInputBaseline(this.opts.projectDir);
       writeInputBaseline(this.opts.projectDir, baseline);
       log.info(`  recorded ${Object.keys(baseline.files).length} supplied input(s)`);
+
+      // A supplied read-only bibliography cannot carry the activation marker
+      // the adopted reference-integrity profile requires, and no remediation
+      // turn can add one. Decide that here, once, rather than leaving a later
+      // stage to fail with no legal move.
+      const note = reconcileReferenceIntegrityAdoption(this.opts.projectDir);
+      if (note) log.info(`  ${note}`);
     }
 
     if (stage.id === "material_assessment") {

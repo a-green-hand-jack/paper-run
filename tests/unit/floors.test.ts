@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -21,7 +21,11 @@ import {
   pageBudget,
   wordTarget,
 } from "../../src/pipeline/manuscript.js";
-import { captureInputBaseline, isSuppliedBibliography } from "../../src/pipeline/inputs.js";
+import {
+  captureInputBaseline,
+  isSuppliedBibliography,
+  reconcileReferenceIntegrityAdoption,
+} from "../../src/pipeline/inputs.js";
 import { writeInputBaseline } from "../../src/state/store.js";
 import { PAPER_RUN_DIR } from "../../src/utils/constants.js";
 
@@ -31,6 +35,8 @@ beforeEach(() => {
   tmpDir = mkdtempSync(join(tmpdir(), "paper-run-floors-"));
   mkdirSync(join(tmpDir, "paper", "sections"), { recursive: true });
   mkdirSync(join(tmpDir, PAPER_RUN_DIR), { recursive: true });
+  mkdirSync(join(tmpDir, ".agents"), { recursive: true });
+  mkdirSync(join(tmpDir, "materials"), { recursive: true });
 });
 
 afterEach(() => {
@@ -512,5 +518,55 @@ describe("the title anchor holds structure, not prose", () => {
     const result = await validateStage(stageWith(validator), tmpDir);
     expect(result.passed).toBe(false);
     expect(result.checks[0]!.message).toContain("01_abstract");
+  });
+});
+
+describe("reference-integrity adoption against a supplied bibliography", () => {
+  it("switches adoption off when the bibliography cannot carry the marker", () => {
+    // The template ships `adopted: true`, and the checker then requires an
+    // activation marker inside paper/refs.bib. A task-supplied read-only
+    // bibliography cannot carry one, and `inputs_unmodified` forbids adding
+    // it -- the third deadlock of this shape, after the BibTeX build failure
+    // and the appendix anchor.
+    const bib = "@article{a, title={W}, year={2026}}\n";
+    writeFileSync(join(tmpDir, "materials", "references.bib"), bib);
+    writeFileSync(join(tmpDir, "paper", "refs.bib"), bib);
+    chmodSync(join(tmpDir, "paper", "refs.bib"), 0o444);
+    writeFileSync(
+      join(tmpDir, ".agents", "template-sync.json"),
+      JSON.stringify({ reference_integrity: { adopted: true } }, null, 2),
+    );
+
+    const note = reconcileReferenceIntegrityAdoption(tmpDir);
+    const sync = JSON.parse(readFileSync(join(tmpDir, ".agents", "template-sync.json"), "utf-8"));
+
+    expect(note).toContain("unadopted profile");
+    expect(sync.reference_integrity.adopted).toBe(false);
+    expect(sync.reference_integrity.adoption_note).toContain("read-only");
+  });
+
+  it("leaves adoption alone for a bibliography the paper owns", () => {
+    writeFileSync(join(tmpDir, "paper", "refs.bib"), "@article{a, year={2026}}\n");
+    writeFileSync(
+      join(tmpDir, ".agents", "template-sync.json"),
+      JSON.stringify({ reference_integrity: { adopted: true } }, null, 2),
+    );
+
+    expect(reconcileReferenceIntegrityAdoption(tmpDir)).toBeNull();
+    const sync = JSON.parse(readFileSync(join(tmpDir, ".agents", "template-sync.json"), "utf-8"));
+    expect(sync.reference_integrity.adopted).toBe(true);
+  });
+
+  it("leaves adoption alone when the supplied bibliography already carries the marker", () => {
+    const bib = "% REFERENCE_INTEGRITY_REQUIRED: references/ledger.json\n@article{a, year={2026}}\n";
+    writeFileSync(join(tmpDir, "materials", "references.bib"), bib);
+    writeFileSync(join(tmpDir, "paper", "refs.bib"), bib);
+    chmodSync(join(tmpDir, "paper", "refs.bib"), 0o444);
+    writeFileSync(
+      join(tmpDir, ".agents", "template-sync.json"),
+      JSON.stringify({ reference_integrity: { adopted: true } }, null, 2),
+    );
+
+    expect(reconcileReferenceIntegrityAdoption(tmpDir)).toBeNull();
   });
 });

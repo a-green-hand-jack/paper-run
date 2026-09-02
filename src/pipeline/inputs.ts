@@ -13,7 +13,7 @@
  */
 
 import { createHash } from "node:crypto";
-import { constants, accessSync, existsSync, readFileSync, statSync } from "node:fs";
+import { constants, accessSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { discoverMaterials } from "./material-assessment.js";
@@ -117,4 +117,90 @@ export function isSuppliedBibliography(projectDir: string, relative = "paper/ref
 
 function digest(path: string): string {
   return `sha256:${createHash("sha256").update(readFileSync(path)).digest("hex")}`;
+}
+
+/**
+ * The reference-integrity activation marker the harness looks for in `refs.bib`.
+ *
+ * Mirrored from `.agents/tools/check-reference-integrity.py`. Duplicating a
+ * constant is not ideal, but the alternative is executing the checker to ask
+ * it a question, and this string is part of the harness's durable contract.
+ */
+const ACTIVATION_MARKER = "% REFERENCE_INTEGRITY_REQUIRED: references/ledger.json";
+
+/**
+ * Switch reference-integrity adoption off when the bibliography cannot carry it.
+ *
+ * The harness template ships `reference_integrity.adopted: true`, and
+ * `check-reference-integrity.py` then requires an activation marker *inside*
+ * `paper/refs.bib`. When a task supplies its own read-only bibliography, that
+ * marker cannot be added: `inputs_unmodified` forbids editing supplied inputs,
+ * and the file is usually mode 444 anyway. The stage fails with
+ *
+ *     ERROR adopted reference integrity requires the refs.bib activation marker
+ *
+ * and no remediation turn has a legal move. It is the third deadlock of this
+ * exact shape — two correct rules, an input nobody may touch — after the
+ * BibTeX build failure and the appendix anchor.
+ *
+ * A previous run only got past it because the eval harness hand-edited the
+ * adoption flag during setup. That is the controller's job, not the operator's:
+ * paper-run is what decides to seed a supplied bibliography, so paper-run is
+ * what should record that the repository cannot adopt a check requiring a
+ * marker in it.
+ *
+ * Returns a note when it changed something, so bootstrap can log the reason.
+ * Never throws: a repository without the harness metadata simply has nothing to
+ * reconcile.
+ */
+export function reconcileReferenceIntegrityAdoption(projectDir: string): string | null {
+  const root = resolve(projectDir);
+  const bibliography = join(root, "paper", "refs.bib");
+  if (!existsSync(bibliography)) return null;
+
+  // A bibliography that already carries the marker is adoptable, whatever its
+  // origin, and a bibliography the paper owns can have the marker added.
+  let text: string;
+  try {
+    text = readFileSync(bibliography, "utf-8");
+  } catch {
+    return null;
+  }
+  if (text.includes(ACTIVATION_MARKER)) return null;
+  if (!isSuppliedBibliography(root, "paper/refs.bib")) return null;
+
+  const syncPath = join(root, ".agents", "template-sync.json");
+  if (!existsSync(syncPath)) return null;
+
+  let sync: Record<string, unknown>;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(syncPath, "utf-8"));
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
+    sync = parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+
+  const state = sync["reference_integrity"];
+  const adopted =
+    typeof state === "object" && state !== null && !Array.isArray(state)
+      ? (state as Record<string, unknown>)["adopted"]
+      : undefined;
+  if (adopted !== true) return null;
+
+  sync["reference_integrity"] = {
+    ...(state as Record<string, unknown>),
+    adopted: false,
+    adoption_note:
+      "paper/refs.bib is a task-supplied read-only bibliography and cannot carry the "
+      + "activation marker; reference integrity runs in its unadopted profile.",
+  };
+
+  try {
+    writeFileSync(syncPath, `${JSON.stringify(sync, null, 2)}\n`, "utf-8");
+  } catch {
+    return null;
+  }
+
+  return "reference integrity set to its unadopted profile: the supplied bibliography is read-only";
 }
