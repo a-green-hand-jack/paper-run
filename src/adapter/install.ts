@@ -171,8 +171,12 @@ function isStaleAdapterFile(sourcePath: string, targetPath: string): boolean {
   } catch {
     return false;
   }
-  const current = Number(installed?.[1] ?? 0);
-  return Number(source[1]) > current;
+  // No marker means the file is not a recognisable template copy -- most
+  // likely a human rewrote it. Refreshing it would break the promise that an
+  // edit survives an upgrade, and "old template" is indistinguishable from
+  // "hand-written" here. Those repositories need an explicit --force.
+  if (!installed) return false;
+  return Number(source[1]) > Number(installed[1]);
 }
 
 /**

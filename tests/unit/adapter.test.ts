@@ -150,6 +150,34 @@ describe("installAdapter re-install", () => {
     expect(readFileSync(edited, "utf-8")).toBe("MY LOCAL EDIT");
   });
 
+  it("refreshes a template copy whose revision the template has moved past", async () => {
+    // Install is non-destructive so a human's edit survives an upgrade. The
+    // cost is that a template change never reaches an existing repository,
+    // which for a behaviour-carrying file like the writer's instructions means
+    // an upgrade silently changes nothing.
+    await installAdapter(tmpDir);
+    const installed = join(tmpDir, OPENCODE_DIR, "agents", "paper-writer.md");
+    writeFileSync(installed, "<!-- paper-run-adapter-revision: 1 -->\n\nold instructions\n");
+
+    await installAdapter(tmpDir);
+
+    const refreshed = readFileSync(installed, "utf-8");
+    expect(refreshed).not.toContain("old instructions");
+    expect(refreshed).toContain("You are already oriented");
+  });
+
+  it("leaves a file with no revision marker alone, however old", async () => {
+    // "Old template" and "hand-written" are indistinguishable without a
+    // marker, and the promise that an edit survives wins the tie.
+    await installAdapter(tmpDir);
+    const installed = join(tmpDir, OPENCODE_DIR, "agents", "paper-writer.md");
+    writeFileSync(installed, "MY LOCAL REWRITE");
+
+    await installAdapter(tmpDir);
+
+    expect(readFileSync(installed, "utf-8")).toBe("MY LOCAL REWRITE");
+  });
+
   it("overwrites when force is set", async () => {
     await installAdapter(tmpDir);
 
