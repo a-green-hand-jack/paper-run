@@ -433,3 +433,84 @@ describe("the appendix anchor is structural, not a content promise", () => {
     expect(result.passed).toBe(true);
   });
 });
+
+describe("the title anchor holds no prose by construction", () => {
+  const validator: Validator = {
+    type: "section_substance",
+    required: true,
+    message: "The manuscript inputs a section that says nothing",
+  };
+
+  it("accepts the \\maketitle title slot every harness paper ships", async () => {
+    // check-structure.py forces main.tex to input 00_title, and the file is
+    // `\maketitle`. The run that shipped ten pages had exactly this, so
+    // flagging it is a false positive on every correct manuscript.
+    section("00_title", "\\maketitle\n");
+    section("02_intro", "Pruning is a deployment transformation with security consequences.\n");
+    main(["00_title", "02_intro"]);
+
+    const result = await validateStage(stageWith(validator), tmpDir);
+    expect(result.passed).toBe(true);
+  });
+
+  it("still fails an abstract that says nothing", async () => {
+    // 01_abstract is required too, but an empty abstract is a broken paper,
+    // not a structural slot -- so it is deliberately not exempt.
+    section("01_abstract", "TODO\n");
+    section("02_intro", "Real prose about pruning.\n");
+    main(["01_abstract", "02_intro"]);
+
+    const result = await validateStage(stageWith(validator), tmpDir);
+    expect(result.passed).toBe(false);
+    expect(result.checks[0]!.message).toContain("01_abstract");
+  });
+
+  it("still fails a title slot that prints TODO", async () => {
+    section("00_title", "\\maketitle\nTODO\n");
+    section("02_intro", "Real prose about pruning.\n");
+    main(["00_title", "02_intro"]);
+
+    const result = await validateStage(stageWith(validator), tmpDir);
+    expect(result.passed).toBe(false);
+  });
+});
+
+describe("the title anchor holds structure, not prose", () => {
+  const validator: Validator = {
+    type: "section_substance",
+    required: true,
+    message: "The manuscript inputs a section that says nothing",
+  };
+
+  it("accepts a title file containing only \\maketitle", async () => {
+    // `check-structure.py` forces main.tex to input sections/00_title, and a
+    // correct one holds `\maketitle`. Flagging it sent a live remediation
+    // turn off to write prose into a title file.
+    section("00_title", "\\maketitle\n");
+    section("02_intro", "Pruning is a deployment transformation with security consequences.\n");
+    main(["00_title", "02_intro"]);
+
+    const result = await validateStage(stageWith(validator), tmpDir);
+    expect(result.passed).toBe(true);
+  });
+
+  it("still rejects a title file that prints TODO", async () => {
+    section("00_title", "\\maketitle\nTODO: pick a title\n");
+    section("02_intro", "Real prose about pruning.\n");
+    main(["00_title", "02_intro"]);
+
+    const result = await validateStage(stageWith(validator), tmpDir);
+    expect(result.passed).toBe(false);
+  });
+
+  it("does not exempt the abstract, which is prose", async () => {
+    section("00_title", "\\maketitle\n");
+    section("01_abstract", "\\begin{abstract}\\end{abstract}\n");
+    section("02_intro", "Real prose about pruning.\n");
+    main(["00_title", "01_abstract", "02_intro"]);
+
+    const result = await validateStage(stageWith(validator), tmpDir);
+    expect(result.passed).toBe(false);
+    expect(result.checks[0]!.message).toContain("01_abstract");
+  });
+});

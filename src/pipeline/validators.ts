@@ -319,8 +319,9 @@ async function runValidator(
       // advice would push the writer into a structure violation:
       // `check-structure.py` requires main.tex to input the appendix, so
       // "stop inputting it" is not available there.
-      const anchors = empty.filter((stem) => /^1\d_/.test(stem));
-      const body = empty.filter((stem) => !/^1\d_/.test(stem));
+      const isAnchor = (stem: string) => stem === "00_title" || /^1\d_/.test(stem);
+      const anchors = empty.filter(isAnchor);
+      const body = empty.filter((stem) => !isAnchor(stem));
       const advice = [
         body.length > 0
           ? `${body.join(", ")} — write the section, or drop it from PAPER.md `

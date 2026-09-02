@@ -48,6 +48,9 @@ export interface ManuscriptStats {
   tableEnvironments: number;
 }
 
+/** The title slot `check-structure.py` requires, which holds no prose. */
+const TITLE_ANCHOR = "00_title";
+
 const CITE_RE =
   /\\(?<command>[A-Za-z]*cite[A-Za-z]*\*?)(?:\s*\[[^\]]*\]){0,2}\s*\{(?<keys>[^}]*)\}/g;
 const INPUT_RE = /\\input\s*\{sections\/([^}]+)\}/g;
@@ -192,15 +195,19 @@ export function wordTarget(pages: number): { min: number; max: number } {
  * so a file of real prose carrying one still reads as prose.
  */
 function isPlaceholder(body: string, prose: string, stem: string): boolean {
-  // `check-structure.py` requires `main.tex` to input `10_appendix`, so the
-  // appendix slot exists whether or not the paper has one. Demanding prose
-  // there would deadlock a paper with no appendix against a structural rule it
-  // cannot satisfy -- the same shape as the supplied-bibliography deadlock.
+  // `check-structure.py` forces `main.tex` to input three anchors --
+  // `00_title`, `01_abstract` and `10_appendix` -- whether or not this paper
+  // has content for them. Two of the three legitimately hold no prose at all:
+  // a title slot is `\maketitle`, and a paper with no appendix has an empty
+  // appendix. Demanding prose there would deadlock the manuscript against a
+  // structural rule it cannot satisfy, the same shape as the
+  // supplied-bibliography deadlock.
   //
-  // An empty appendix is legitimate. An appendix printing the word TODO into
-  // the PDF is not, and that is what shipped last time. So the anchor is held
-  // to a weaker rule: say nothing, or say something real.
-  if (/^1\d_/.test(stem)) return hasVisiblePlaceholder(prose);
+  // So the anchors are held to a weaker rule: say nothing, or say something
+  // real. An appendix printing the word TODO into the PDF still fails, and
+  // that is what shipped last time. `01_abstract` is not an anchor here --
+  // an abstract that says nothing is a broken paper, not a structural slot.
+  if (stem === TITLE_ANCHOR || /^1\d_/.test(stem)) return hasVisiblePlaceholder(prose);
 
   // `proseOnly` drops the command but keeps its argument, so a file holding
   // only `\section{Conclusion}` arrives here as the word "Conclusion". A
