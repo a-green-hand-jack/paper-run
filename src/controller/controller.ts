@@ -74,7 +74,7 @@ import {
 import type { LockedContractBaseline } from "../pipeline/locked-contract.js";
 import {
   renderAssessmentPrompt,
-  discoverMaterials,
+  inventoryMaterials,
   hasBrief,
   evaluateAssessment,
   formatBlockReport,
@@ -847,9 +847,13 @@ export class PipelineController {
 
   private buildStagePrompt(stage: Stage, guidance: string | undefined): string {
     if (stage.id === "material_assessment") {
+      const inventory = inventoryMaterials(this.opts.projectDir);
       return renderAssessmentPrompt({
-        materialFiles: discoverMaterials(this.opts.projectDir),
+        materialFiles: inventory.files,
         briefPresent: hasBrief(this.opts.projectDir),
+        ...(inventory.elided.length > 0
+          ? { elidedMaterials: inventory.elided, totalMaterials: inventory.total }
+          : {}),
       });
     }
 

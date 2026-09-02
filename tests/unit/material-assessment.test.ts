@@ -9,13 +9,14 @@
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 
 import {
   ASSESSMENT_CRITERIA,
   renderAssessmentPrompt,
   discoverMaterials,
+  inventoryMaterials,
   hasBrief,
   evaluateAssessment,
   reconcileVerdict,
@@ -466,5 +467,97 @@ describe("the unusable hard stop", () => {
     for (const verdict of ["usable", "partial"] as const) {
       expect(isBlockedByUnusableMaterials("full_draft", verdict), verdict).toBe(false);
     }
+  });
+});
+
+describe("the materials listing is fair across directories", () => {
+  let root: string;
+
+  beforeEach(() => {
+    root = mkdtempSync(join(tmpdir(), "paper-run-inventory-"));
+    writeFileSync(join(root, "BRIEF.md"), "# Brief\n\nWrite the paper.\n");
+  });
+
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  function supply(relative: string, body = "x"): void {
+    const path = join(root, relative);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, body);
+  }
+
+  it("does not let one large directory consume the whole budget", () => {
+    // pwb-0011's exact shape: `materials/code/` sorts first and holds 58
+    // files, so a flat depth-first cap of 60 listed nothing else. The
+    // assessment reported the tables and figures absent and returned
+    // `unusable` for a task that supplies four tables and three figures.
+    for (let i = 0; i < 58; i += 1) supply(`materials/code/configs/c${i}.yaml`);
+    for (const name of ["table_ea", "table_jh", "table_qa", "table_rn"]) {
+      supply(`materials/tables/${name}.tex`);
+    }
+    for (const name of ["plot", "plot_horizontal", "teaser"]) {
+      supply(`materials/figures/${name}.jpg`);
+    }
+    supply("materials/references.bib", "@article{a, year={2026}}");
+    supply("materials/research_overview.md", "# Overview");
+
+    const inventory = inventoryMaterials(root, 60);
+
+    for (const name of ["table_ea", "table_jh", "table_qa", "table_rn"]) {
+      expect(inventory.files).toContain(`materials/tables/${name}.tex`);
+    }
+    expect(inventory.files).toContain("materials/figures/plot.jpg");
+    expect(inventory.files).toContain("materials/references.bib");
+    expect(inventory.files).toContain("materials/research_overview.md");
+  });
+
+  it("reports what it could not name rather than dropping it silently", () => {
+    for (let i = 0; i < 200; i += 1) supply(`materials/code/f${i}.py`);
+    supply("materials/tables/table_ea.tex");
+
+    const inventory = inventoryMaterials(root, 60);
+
+    expect(inventory.total).toBe(202); // 200 + 1 table + BRIEF.md
+    expect(inventory.files.length).toBeLessThanOrEqual(60);
+    expect(inventory.elided.some((entry) => entry.dir === "materials/code")).toBe(true);
+  });
+
+  it("names every file when they all fit", () => {
+    supply("materials/tables/table_ea.tex");
+    supply("materials/figures/plot.jpg");
+
+    const inventory = inventoryMaterials(root, 60);
+
+    expect(inventory.elided).toEqual([]);
+    expect(inventory.files).toEqual([
+      "BRIEF.md",
+      "materials/figures/plot.jpg",
+      "materials/tables/table_ea.tex",
+    ]);
+  });
+
+  it("tells the agent when the listing is a subset, so absence is not inferred from it", () => {
+    const prompt = renderAssessmentPrompt({
+      materialFiles: ["BRIEF.md", "materials/code/a.py"],
+      briefPresent: true,
+      elidedMaterials: [{ dir: "materials/code", omitted: 140 }],
+      totalMaterials: 142,
+    });
+
+    expect(prompt).toContain("This listing is truncated");
+    expect(prompt).toContain("140 further file(s)");
+    expect(prompt).toContain("never evidence that the");
+  });
+
+  it("says nothing about truncation when there is none", () => {
+    const prompt = renderAssessmentPrompt({
+      materialFiles: ["BRIEF.md", "materials/tables/table_ea.tex"],
+      briefPresent: true,
+    });
+
+    expect(prompt).toContain("Files available to you:");
+    expect(prompt).not.toContain("truncated");
   });
 });

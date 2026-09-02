@@ -100,6 +100,10 @@ export const ASSESSMENT_CRITERIA: readonly Criterion[] = [
 export function renderAssessmentPrompt(opts: {
   materialFiles: string[];
   briefPresent: boolean;
+  /** Directories the listing could not name in full. */
+  elidedMaterials?: readonly { dir: string; omitted: number }[];
+  /** Supplied files in total, when the listing is a subset. */
+  totalMaterials?: number;
 }): string {
   const criteria = ASSESSMENT_CRITERIA.map(
     (c) =>
@@ -112,9 +116,31 @@ export function renderAssessmentPrompt(opts: {
       ].join("\n"),
   ).join("\n\n");
 
+  // A truncated listing must never read as a complete one. The stage's whole
+  // job is judging what is present, so "these are the files" and "these are
+  // some of the files" are different questions.
+  const elided = opts.elidedMaterials ?? [];
+  const heading =
+    elided.length > 0
+      ? `Some of the files available to you (${opts.materialFiles.length} of ${opts.totalMaterials ?? opts.materialFiles.length} shown):`
+      : "Files available to you:";
+
+  const tail =
+    elided.length > 0
+      ? [
+          "",
+          "**This listing is truncated.** These directories hold more than is named above:",
+          ...elided.map((e) => `  - \`${e.dir}/\` — ${e.omitted} further file(s)`),
+          "",
+          "List them yourself before judging anything absent. A file missing from this",
+          "listing is a file this prompt had no room for, never evidence that the",
+          "repository does not supply it.",
+        ].join("\n")
+      : "";
+
   const inventory =
     opts.materialFiles.length > 0
-      ? ["Files available to you:", ...opts.materialFiles.map((f) => `  - ${f}`)].join("\n")
+      ? [heading, ...opts.materialFiles.map((f) => `  - ${f}`)].join("\n") + tail
       : "No material files were found beyond the contracts themselves.";
 
   const briefNote = opts.briefPresent
@@ -211,47 +237,113 @@ const MATERIAL_DIRS = ["materials", "evidence", "data", "figures"] as const;
 const MATERIAL_CONTRACTS = ["BRIEF.md", "EXPERIMENTS.md"] as const;
 
 /**
+ * What the repository supplies, and what a bounded listing had to leave out.
+ */
+export interface MaterialInventory {
+  /** Files to name in the prompt, project-relative. */
+  files: string[];
+  /** Every supplied file, before the budget was applied. */
+  total: number;
+  /** Directories whose contents the listing could not name in full. */
+  elided: { dir: string; omitted: number }[];
+}
+
+/**
  * List the files a material assessment should consider.
  *
- * Bounded on purpose: a deep tree of raw data would flood the prompt, and the
- * agent can read further on its own if it needs to.
+ * Bounded on purpose: a deep tree of raw data would flood the prompt. The
+ * bound must be *fair*, though, and it was not. The listing was assembled
+ * depth-first in alphabetical order against a flat cap of sixty, so on
+ * pwb-0011 `materials/code/` — fifty-eight files, first alphabetically —
+ * consumed the entire budget and the listing stopped at
+ * `materials/figure_summary.txt`. Every result table, every figure asset, the
+ * research overview, and the bibliography fell off the end of a list headed
+ * "Files available to you", and the assessment correctly reported them absent.
+ * A verdict of `unusable` followed, on a task that supplies four tables and
+ * three figures.
+ *
+ * So the budget is now shared between directories rather than claimed by
+ * whichever sorts first, and what did not fit is reported rather than dropped
+ * in silence.
  */
 export function discoverMaterials(projectDir: string, maxFiles = 60): string[] {
+  return inventoryMaterials(projectDir, maxFiles).files;
+}
+
+/** `discoverMaterials`, plus what it had to leave out. */
+export function inventoryMaterials(projectDir: string, maxFiles = 60): MaterialInventory {
   const root = resolve(projectDir);
-  const found: string[] = [];
+  const contracts: string[] = [];
 
   for (const contract of MATERIAL_CONTRACTS) {
     const path = join(root, contract);
-    if (existsSync(path) && statSync(path).size > 0) found.push(contract);
+    if (existsSync(path) && statSync(path).size > 0) contracts.push(contract);
   }
 
+  // Everything first, grouped by the directory it sits in. The ceiling is a
+  // guard against a pathological tree, not a budget.
+  const byDirectory = new Map<string, string[]>();
+  let total = contracts.length;
   for (const dir of MATERIAL_DIRS) {
     const abs = join(root, dir);
     if (!existsSync(abs)) continue;
-    collectFiles(abs, root, found, maxFiles, 0);
+    total += collectFiles(abs, root, byDirectory, 0);
   }
 
-  return found.slice(0, maxFiles);
+  const budget = Math.max(maxFiles - contracts.length, 0);
+  const groups = [...byDirectory.entries()].sort(([a], [b]) => a.localeCompare(b));
+  const taken = new Map<string, number>();
+
+  // Round-robin: every directory gets its first file before any gets its
+  // second. A directory of two tables is never starved by a directory of
+  // fifty configs.
+  let placed = 0;
+  for (let round = 0; placed < budget; round += 1) {
+    let progressed = false;
+    for (const [dir, files] of groups) {
+      if (round >= files.length) continue;
+      progressed = true;
+      taken.set(dir, round + 1);
+      placed += 1;
+      if (placed >= budget) break;
+    }
+    if (!progressed) break;
+  }
+
+  const files = [...contracts];
+  const elided: { dir: string; omitted: number }[] = [];
+  for (const [dir, all] of groups) {
+    const count = taken.get(dir) ?? 0;
+    files.push(...all.slice(0, count));
+    if (count < all.length) elided.push({ dir, omitted: all.length - count });
+  }
+
+  return { files: files.sort(), total, elided };
 }
 
+/**
+ * Gather every file under `dir`, grouped by its parent directory.
+ *
+ * Returns how many it found. The 2,000-file ceiling exists so a raw data dump
+ * cannot make this walk unbounded; it is far above any real material tree.
+ */
 function collectFiles(
   dir: string,
   root: string,
-  out: string[],
-  max: number,
+  out: Map<string, string[]>,
   depth: number,
-): void {
-  if (out.length >= max || depth > 3) return;
+): number {
+  if (depth > 3) return 0;
 
   let entries: string[];
   try {
-    entries = readdirSync(dir);
+    entries = readdirSync(dir).sort();
   } catch {
-    return;
+    return 0;
   }
 
+  let found = 0;
   for (const entry of entries) {
-    if (out.length >= max) return;
     if (entry.startsWith(".")) continue;
 
     const abs = join(dir, entry);
@@ -263,11 +355,22 @@ function collectFiles(
     }
 
     if (stat.isDirectory()) {
-      collectFiles(abs, root, out, max, depth + 1);
-    } else if (stat.size > 0) {
-      out.push(relative(root, abs));
+      found += collectFiles(abs, root, out, depth + 1);
+      continue;
     }
+    if (stat.size === 0) continue;
+
+    const path = relative(root, abs);
+    const parent = relative(root, dir) || ".";
+    const bucket = out.get(parent);
+    if (bucket) bucket.push(path);
+    else out.set(parent, [path]);
+    found += 1;
+
+    if (found > 2000) return found;
   }
+
+  return found;
 }
 
 /** True when BRIEF.md exists with meaningful content. */
