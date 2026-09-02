@@ -548,7 +548,12 @@ describe("the materials listing is fair across directories", () => {
 
     expect(prompt).toContain("This listing is truncated");
     expect(prompt).toContain("140 further file(s)");
-    expect(prompt).toContain("never evidence that the");
+    expect(prompt).toContain("never");
+    // It must not send the agent off to enumerate the tree: a headless run
+    // hit an external_directory permission block doing exactly that, and
+    // material sufficiency never needed the other 140 files anyway.
+    expect(prompt).not.toContain("List them yourself");
+    expect(prompt).toContain("you do not need to enumerate the rest");
   });
 
   it("says nothing about truncation when there is none", () => {

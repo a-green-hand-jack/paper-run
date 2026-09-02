@@ -129,12 +129,13 @@ export function renderAssessmentPrompt(opts: {
     elided.length > 0
       ? [
           "",
-          "**This listing is truncated.** These directories hold more than is named above:",
+          "**This listing is truncated.** Every directory above is represented, but these",
+          "hold more files of the same kind than there was room to name:",
           ...elided.map((e) => `  - \`${e.dir}/\` — ${e.omitted} further file(s)`),
           "",
-          "List them yourself before judging anything absent. A file missing from this",
-          "listing is a file this prompt had no room for, never evidence that the",
-          "repository does not supply it.",
+          "A file missing from this listing is a file this prompt had no room for, never",
+          "evidence that the repository does not supply it. Judge from what is named here",
+          "and from the files you open; you do not need to enumerate the rest.",
         ].join("\n")
       : "";
 
