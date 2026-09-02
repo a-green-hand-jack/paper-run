@@ -62,7 +62,7 @@ export type ContractName = keyof typeof CONTRACTS;
 
 /** Upstream harness template, pinned. */
 export const TEMPLATE_REPO = "a-green-hand-jack/agent-writing-harness";
-export const DEFAULT_TEMPLATE_VERSION = "v0.3.0";
+export const DEFAULT_TEMPLATE_VERSION = "v0.3.1";
 
 /** Git naming conventions. */
 export const GIT = {

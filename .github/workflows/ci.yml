@@ -33,7 +33,7 @@ jobs:
       # not exist, so the tests cross-check every one against a real checkout.
       - name: Clone agent-writing-harness (pinned)
         run: |
-          git clone --depth 1 --branch v0.3.0 \
+          git clone --depth 1 --branch v0.3.1 \
             https://github.com/a-green-hand-jack/agent-writing-harness.git \
             "$RUNNER_TEMP/agent-writing-harness"
 
@@ -59,7 +59,7 @@ jobs:
 
       - name: Clone agent-writing-harness (pinned)
         run: |
-          git clone --depth 1 --branch v0.3.0 \
+          git clone --depth 1 --branch v0.3.1 \
             https://github.com/a-green-hand-jack/agent-writing-harness.git \
             "$RUNNER_TEMP/agent-writing-harness"
 

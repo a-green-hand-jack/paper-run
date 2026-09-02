@@ -48,7 +48,11 @@ describe("constants", () => {
     expect(TEMPLATE_REPO).toBe("a-green-hand-jack/agent-writing-harness");
   });
 
-  it("DEFAULT_TEMPLATE_VERSION is v0.3.0", () => {
-    expect(DEFAULT_TEMPLATE_VERSION).toBe("v0.3.0");
+  it("DEFAULT_TEMPLATE_VERSION is v0.3.1", () => {
+    // v0.3.1 is the first release in which a supplied, read-only bibliography
+    // can be cited offline. Against v0.3.0 the citation floors this pipeline
+    // now enforces are unsatisfiable: the Draft citation-support profile
+    // requires retrieved passages the writer has no way to fetch.
+    expect(DEFAULT_TEMPLATE_VERSION).toBe("v0.3.1");
   });
 });
