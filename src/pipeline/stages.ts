@@ -64,6 +64,8 @@ export type Validator =
   | { type: "publication_build"; required: boolean; message: string }
   /** Mechanical prose tells across the drafted manuscript. Advisory by design. */
   | { type: "prose_quality"; dir?: string; required: boolean; message: string }
+  /** PAPER.md's section responsibilities table yields a usable manuscript outline. */
+  | { type: "section_plan"; required: boolean; message: string }
   /** The reviewer left machine-readable findings, not only a prose report. */
   | { type: "review_findings"; required: boolean; message: string }
   /** Findings at these severities were each fixed or explicitly deferred. */
@@ -236,6 +238,15 @@ export const STAGES: Record<StageId, Stage> = {
         message:
           "PAPER.md ## Story and structure is missing or empty — drafting reads its "
           + "### Section responsibilities table to decide which sections to write",
+      },
+      // Drafting reads this table to decide which sections exist. A table that
+      // does not parse would silently degrade the next stage to a single
+      // whole-manuscript turn, which is the failure this pipeline was
+      // restructured to remove.
+      {
+        type: "section_plan",
+        required: true,
+        message: "PAPER.md ### Section responsibilities does not yield a usable outline",
       },
       {
         type: "check_script",

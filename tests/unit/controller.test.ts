@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execaSync } from "execa";
@@ -1169,21 +1169,69 @@ describe("permissions", () => {
 // Per-section drafting
 // ---------------------------------------------------------------------------
 
-describe("per-section drafting", () => {
-  function seedSections(names: string[]): void {
-    const dir = join(tmpDir, "paper", "sections");
-    mkdirSync(dir, { recursive: true });
-    for (const name of names) writeFileSync(join(dir, name), "% placeholder\n");
+describe("outline-driven drafting", () => {
+  /** Give PAPER.md a section responsibilities table naming these sections. */
+  function planSections(rows: Array<[string, string]>): void {
+    const table = [
+      "## Story and structure",
+      "",
+      "### Narrative arc",
+      "",
+      "1. A bounded question, then the evidence for it.",
+      "",
+      "### Section responsibilities",
+      "",
+      "| Section | Reader task | Must preserve |",
+      "|---|---|---|",
+      ...rows.map(([name, task]) => `| ${name} | ${task} | scope |`),
+      "",
+    ].join("\n");
+    writeFileSync(join(tmpDir, "PAPER.md"), `${readFileSync(join(tmpDir, "PAPER.md"), "utf-8")}\n${table}`);
   }
 
-  it("sends one turn per section instead of one turn for the manuscript", async () => {
-    seedSections(["02_intro.tex", "04_method.tex", "05_exp.tex"]);
+  function mainTex(): string {
+    return readFileSync(join(tmpDir, "paper", "main.tex"), "utf-8");
+  }
+
+  function seedTemplateLayout(): void {
+    const dir = join(tmpDir, "paper", "sections");
+    mkdirSync(dir, { recursive: true });
+    // The template's own list, including two sections a paper may not want.
+    for (const name of ["00_title", "01_abstract", "02_intro", "07_limitations", "08_acknowledgement", "10_appendix"]) {
+      writeFileSync(join(dir, `${name}.tex`), "% placeholder\n");
+    }
+    writeFileSync(
+      join(tmpDir, "paper", "main.tex"),
+      [
+        "\\documentclass{article}",
+        "\\begin{document}",
+        "\\input{sections/00_title}",
+        "\\input{sections/01_abstract}",
+        "\\input{sections/02_intro}",
+        "\\input{sections/07_limitations}",
+        "\\ifPaperAcknowledgements",
+        "  \\input{sections/08_acknowledgement}",
+        "\\fi",
+        "\\appendix",
+        "\\input{sections/10_appendix}",
+        "\\end{document}",
+        "",
+      ].join("\n"),
+    );
+  }
+
+  it("sends one turn per section the plan names, not per file on disk", async () => {
+    seedTemplateLayout();
+    planSections([
+      ["Introduction", "Build the tension"],
+      ["Method", "Make the pipeline auditable"],
+      ["Analysis", "Explain what the tables show"],
+    ]);
     writeRunState(tmpDir, makeRunState({ current_stage: "full_draft" }));
 
     const ac = new AbortController();
     const client = mockClient({
       onPrompt: (_text, turn) => {
-        // Let all three section turns be issued, then stop before validation.
         if (turn >= 3) setTimeout(() => ac.abort(), 5);
       },
     });
@@ -1194,18 +1242,38 @@ describe("per-section drafting", () => {
     const prompts: string[] = client._prompts;
     expect(prompts).toHaveLength(3);
     expect(prompts[0]).toContain("section 1/3");
-    expect(prompts[0]).toContain("paper/sections/02_intro.tex");
-    expect(prompts[1]).toContain("paper/sections/04_method.tex");
-    expect(prompts[2]).toContain("section 3/3");
-    expect(prompts[2]).toContain("paper/sections/05_exp.tex");
+    expect(prompts[0]).toContain("02_intro.tex");
+    expect(prompts[1]).toContain("03_method.tex");
+    expect(prompts[2]).toContain("04_analysis.tex");
+  });
 
-    // Each turn is scoped to its own file rather than the whole draft.
-    for (const prompt of prompts) {
-      expect(prompt).toContain("Do not draft, revise, or reorganise the other sections");
+  it("creates a section the template does not ship and drops one the plan omits", async () => {
+    seedTemplateLayout();
+    planSections([["Introduction", "Build the tension"], ["Analysis", "Explain the tables"]]);
+    writeRunState(tmpDir, makeRunState({ current_stage: "full_draft" }));
+
+    const ac = new AbortController();
+    const client = mockClient({ onPrompt: () => setTimeout(() => ac.abort(), 5) });
+    await makeController(client, "autonomous", ac.signal).run();
+
+    // The plan asked for Analysis, which the template has no file for.
+    expect(existsSync(join(tmpDir, "paper", "sections", "03_analysis.tex"))).toBe(true);
+    expect(mainTex()).toContain("\\input{sections/03_analysis}");
+
+    // Sections the plan did not name are dropped from the document but left on
+    // disk -- check-structure.py allows an uninputted file, and deleting a
+    // template section would be an irreversible answer to a reversible question.
+    expect(mainTex()).not.toContain("07_limitations");
+    expect(mainTex()).not.toContain("08_acknowledgement");
+    expect(existsSync(join(tmpDir, "paper", "sections", "07_limitations.tex"))).toBe(true);
+
+    // The three anchors check-structure.py requires survive regardless.
+    for (const anchor of ["00_title", "01_abstract", "10_appendix"]) {
+      expect(mainTex()).toContain(`\\input{sections/${anchor}}`);
     }
   });
 
-  it("falls back to a single turn when the section layout is missing", async () => {
+  it("falls back to a single turn when no plan exists", async () => {
     writeRunState(tmpDir, makeRunState({ current_stage: "full_draft" }));
 
     const ac = new AbortController();
@@ -1220,7 +1288,8 @@ describe("per-section drafting", () => {
   });
 
   it("names the required reading in every section turn", async () => {
-    seedSections(["02_intro.tex", "04_method.tex"]);
+    seedTemplateLayout();
+    planSections([["Introduction", "Build the tension"], ["Method", "Auditable pipeline"]]);
     writeRunState(tmpDir, makeRunState({ current_stage: "full_draft" }));
 
     const ac = new AbortController();

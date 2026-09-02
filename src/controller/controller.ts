@@ -28,7 +28,7 @@
 
 import type { OpencodeClient } from "@opencode-ai/sdk/v2";
 import { isDeepStrictEqual } from "node:util";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { execa } from "execa";
 
 import {
@@ -55,6 +55,7 @@ import { resolveStageTimeoutMultiplier } from "../state/timeout.js";
 import { remainingStages, stageNumber, TOTAL_STAGES } from "../pipeline/stages.js";
 import type { Stage } from "../pipeline/stages.js";
 import { renderStagePrompt, renderRemediationPrompt, renderSectionPrompt } from "../pipeline/prompts.js";
+import { readPlannedSections, planIssues, reconcileMainTex } from "../pipeline/outline.js";
 import {
   buildPublicationArtifacts,
   capturePublicationBaseline,
@@ -748,7 +749,7 @@ export class PipelineController {
   private buildStagePrompts(stage: Stage, guidance: string | undefined): string[] {
     if (!stage.perSection) return [this.buildStagePrompt(stage, guidance)];
 
-    const sections = this.discoverSections();
+    const sections = this.plannedSections();
     if (sections.length === 0) {
       // No section files to iterate: fall back rather than skip the stage.
       // Whether that is a real problem is the validators' call, not this one's.
@@ -768,37 +769,29 @@ export class PipelineController {
   }
 
   /**
-   * Manuscript sections, in reading order.
+   * Manuscript sections, in reading order, from the plan rather than the disk.
    *
-   * The harness template ships `paper/sections/` with numbered files, so the
-   * filesystem already carries both the list and its order. Returns an empty
-   * list when the layout is missing or implausibly large — a repository with
-   * fifty section files would turn one stage into fifty model turns, which is
-   * not an improvement over one.
+   * The filesystem carries the *template's* section list. Iterating it meant a
+   * planned Analysis section had nowhere to go while two turns were spent on a
+   * limitations and an acknowledgements section the task forbade. The plan is
+   * the authority, and `main.tex` is regenerated to match before any drafting
+   * turn runs — deterministically, because a legal layout needs no judgement.
    */
-  private discoverSections(maxSections = 20): string[] {
-    const dir = `${this.opts.projectDir}/paper/sections`;
-    if (!existsSync(dir)) return [];
-
-    let entries: string[];
-    try {
-      entries = readdirSync(dir).sort();
-    } catch {
+  private plannedSections(): string[] {
+    const sections = readPlannedSections(this.opts.projectDir);
+    const issues = planIssues(sections);
+    if (issues.length > 0) {
+      log.warn(`Section plan unusable, drafting the manuscript in one turn: ${issues[0]}`);
       return [];
     }
 
-    const sections = entries
-      .filter((entry) => entry.endsWith(".tex"))
-      .filter((entry) => {
-        try {
-          return statSync(`${dir}/${entry}`).isFile();
-        } catch {
-          return false;
-        }
-      })
-      .map((entry) => `paper/sections/${entry}`);
+    const { created, inputs } = reconcileMainTex(this.opts.projectDir, sections);
+    if (created.length > 0) {
+      log.info(`  created ${created.length} section file(s) the plan named`);
+    }
+    log.info(`  outline: ${inputs.join(", ")}`);
 
-    return sections.length > maxSections ? [] : sections;
+    return sections.map((section) => `paper/sections/${section.stem}.tex`);
   }
 
   /**

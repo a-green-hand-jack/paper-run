@@ -21,6 +21,7 @@ import { PAPER_RUN_DIR } from "../utils/constants.js";
 import { log } from "../utils/logger.js";
 import { readPublication, readReviewFindings, writePublication } from "../state/store.js";
 import { inspectManuscript, blockingProseIssues, summarizeProseReport } from "./prose-quality.js";
+import { readPlannedSections, planIssues } from "./outline.js";
 
 import type { Stage, Validator } from "./stages.js";
 
@@ -173,6 +174,20 @@ async function runValidator(
         passed,
         required: validator.required,
         message: passed ? undefined : `${validator.message}: ${summarizeProseReport(report)}`,
+      };
+    }
+
+    case "section_plan": {
+      const sections = readPlannedSections(projectDir);
+      const issues = planIssues(sections);
+      return {
+        name: "section-plan",
+        passed: issues.length === 0,
+        required: validator.required,
+        message:
+          issues.length === 0
+            ? undefined
+            : `${validator.message}: ${issues.join("; ")}`,
       };
     }
 
