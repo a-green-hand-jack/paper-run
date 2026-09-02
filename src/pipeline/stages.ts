@@ -635,6 +635,28 @@ export function getStage(id: string): Stage {
   return stage;
 }
 
+/**
+ * Look up a stage without throwing.
+ *
+ * Reading an old run means meeting ids this version no longer runs. Callers
+ * that only need to *display* or *reconcile* history use this; callers that are
+ * about to execute a stage use `getStage` and want the throw.
+ */
+export function findStage(id: string): Stage | null {
+  return STAGES[id as StageId] ?? null;
+}
+
+/**
+ * Position of a stage id, or -1 when this version does not know it.
+ *
+ * `reconcileHistory` compares positions to decide which history records survive
+ * a rewind. A retired id has no position in the current pipeline, and throwing
+ * there turned `paper-run status` on an older run into a stack trace.
+ */
+export function stagePosition(id: string): number {
+  return PIPELINE_STAGES.indexOf(id as StageId);
+}
+
 /** The stage after `id`, or null at the end of the pipeline. */
 export function getNextStage(id: string): Stage | null {
   const index = PIPELINE_STAGES.indexOf(id as StageId);

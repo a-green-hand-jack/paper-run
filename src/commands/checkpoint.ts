@@ -18,7 +18,7 @@ import {
 import { PAPER_RUN_DIR, STATE_FILES } from "../utils/constants.js";
 import { PaperRunError } from "../utils/errors.js";
 import { requireProjectRoot } from "../utils/paths.js";
-import { getStage, stageNumber } from "../pipeline/stages.js";
+import { findStage, stagePosition } from "../pipeline/stages.js";
 import { log } from "../utils/logger.js";
 import {
   authorizesLockedContract,
@@ -206,7 +206,8 @@ function reconcileCheckpoint(
   checkpoint: Awaited<ReturnType<typeof findLastCheckpoint>> & {},
 ): RunState {
   const stageId = checkpoint.trailers["Paper-Run-Stage"]!;
-  getStage(stageId);
+  // Tolerated for reading; execution refuses retired ids in the controller.
+  findStage(stageId);
   const status = checkpoint.trailers["Paper-Run-Status"] as RunState["stage_status"];
   const manual = checkpoint.trailers["Paper-Run-Kind"] === "manual";
   const terminal = !manual && (status === "completed" || status === "blocked");
@@ -254,10 +255,14 @@ function reconcileHistory(
     history = { schema_version: "paper-run-stage-history-v1", stages: [] };
   }
 
-  const limit = stageNumber(checkpointStage);
+  const limit = stagePosition(checkpointStage) + 1;
   const stages = history.stages.filter((record) => {
     if (record.status === "skipped") return true;
-    const position = stageNumber(record.stage_id);
+    // A record this version does not recognise belongs to an earlier
+    // vocabulary. Keep it: it is provenance, and it cannot be positioned
+    // against the current pipeline to decide otherwise.
+    const position = stagePosition(record.stage_id) + 1;
+    if (position === 0) return true;
     return position < limit || (position === limit && status !== undefined);
   }).map((record) =>
     record.stage_id === checkpointStage && status

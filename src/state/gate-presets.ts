@@ -28,6 +28,51 @@ export const PIPELINE_STAGES = [
 export type StageId = (typeof PIPELINE_STAGES)[number];
 
 /**
+ * Stage ids this pipeline no longer runs.
+ *
+ * Stage ids are part of the on-disk contract: `git.ts` puts one in every
+ * checkpoint commit's `Paper-Run-Stage` trailer, and `stage-history.json`
+ * records one per completed stage. Dropping an id from `PIPELINE_STAGES`
+ * without remembering it would make the entire checkpoint history of an
+ * in-flight run unparseable — before any state file is even read.
+ *
+ * So retired ids stay readable forever. What they do not get is execution: a
+ * run whose next stage is retired stops with an explanation instead of being
+ * silently reinterpreted.
+ */
+export const RETIRED_STAGE_IDS = [
+  "evidence_inventory",
+  "paper_positioning",
+  "claim_evidence",
+  "story_outline",
+  "canonical_drafting",
+  "citation_integration",
+] as const;
+
+export type RetiredStageId = (typeof RETIRED_STAGE_IDS)[number];
+
+/** Every stage id that may legitimately appear in a repository's history. */
+export const KNOWN_STAGE_IDS: readonly string[] = [
+  ...PIPELINE_STAGES,
+  ...RETIRED_STAGE_IDS,
+];
+
+/**
+ * True when `id` is a stage this version records but will not run.
+ *
+ * Membership in `RETIRED_STAGE_IDS` is not enough: an id may be listed there
+ * and still be live during a staged rollout. Retirement is the conjunction —
+ * historically known, currently absent — so this predicate stays correct
+ * whichever order the two lists are edited in.
+ */
+export function isRetiredStage(id: string): boolean {
+  return (
+    (RETIRED_STAGE_IDS as readonly string[]).includes(id) &&
+    !(PIPELINE_STAGES as readonly string[]).includes(id)
+  );
+}
+
+/**
  * Stages where collaborative mode defaults to `await_human`.
  * These represent key decision points the human should weigh in on.
  */

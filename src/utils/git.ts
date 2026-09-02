@@ -12,7 +12,7 @@ import { GIT, TRAILER_KEYS } from "../utils/constants.js";
 import { MODES } from "../utils/constants.js";
 import type { Mode, TrailerKey } from "../utils/constants.js";
 import { StageStatusSchema, StageTimeoutMultiplierSchema, type RunState } from "../state/schema.js";
-import { PIPELINE_STAGES } from "../state/gate-presets.js";
+import { KNOWN_STAGE_IDS } from "../state/gate-presets.js";
 import { PaperRunError } from "../utils/errors.js";
 
 // ---------------------------------------------------------------------------
@@ -206,7 +206,10 @@ export function parseTrailers(commitMessage: string): Trailers {
   for (const key of REQUIRED_TRAILERS) {
     if (trailers[key] === undefined) throw invalidTrailers(`is missing mandatory key ${key}`);
   }
-  if (!PIPELINE_STAGES.includes(trailers["Paper-Run-Stage"] as never)) throw invalidTrailers("has an unknown stage");
+  // Retired ids are accepted here on purpose: this history was written by an
+  // earlier pipeline vocabulary and must stay readable. Refusing to *run* a
+  // retired stage happens later, in the controller.
+  if (!KNOWN_STAGE_IDS.includes(trailers["Paper-Run-Stage"]!)) throw invalidTrailers("has an unknown stage");
   if (!StageStatusSchema.safeParse(trailers["Paper-Run-Status"]).success) throw invalidTrailers("has an unknown status");
   if (!(MODES as readonly string[]).includes(trailers["Paper-Run-Mode"]!)) throw invalidTrailers("has an unknown mode");
   if (!(["automatic", "manual"] as const).includes(trailers["Paper-Run-Kind"] as never)) throw invalidTrailers("has an unknown kind");

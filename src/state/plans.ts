@@ -1,4 +1,4 @@
-import { PIPELINE_STAGES, type StageId } from "./gate-presets.js";
+import { PIPELINE_STAGES, isRetiredStage, type StageId } from "./gate-presets.js";
 import type { RunPlan } from "./schema.js";
 import { PaperRunError } from "../utils/errors.js";
 
@@ -82,6 +82,14 @@ export function validateRunPlan(stages: readonly string[]): void {
 }
 
 export function planStages(plan: RunPlan): StageId[] {
+  // A plan recorded before the pipeline vocabulary changed cannot be
+  // recomputed against the current stage list: its `skipped` metadata names
+  // stages this version no longer has. Trust what was recorded rather than
+  // failing a run that is otherwise resumable for reading.
+  if (plan.stages.some(isRetiredStage) || plan.skipped.some((item) => isRetiredStage(item.stage))) {
+    return plan.stages.filter((stage) => !isRetiredStage(stage)) as StageId[];
+  }
+
   validateRunPlan(plan.stages);
   const selected = new Set(plan.stages);
   const expectedSkipped = PIPELINE_STAGES.filter((stage) => !selected.has(stage));

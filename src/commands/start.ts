@@ -19,8 +19,8 @@
  */
 
 import { readRunState, readGatePolicy, updateRunState, readStageHistory, writeStageHistory } from "../state/store.js";
-import type { RunState } from "../state/schema.js";
-import { generateGatePreset } from "../state/gate-presets.js";
+import type { GatePolicy, RunState } from "../state/schema.js";
+import { generateGatePreset, PIPELINE_STAGES } from "../state/gate-presets.js";
 import { writeGatePolicy } from "../state/store.js";
 import { switchOperatingMode } from "../state/mode.js";
 import {
@@ -40,7 +40,7 @@ import type { PipelineResult } from "../controller/controller.js";
 import { detectHarness } from "../harness/harness.js";
 import { isAdapterInstalled, installAdapter, ensureGitignore } from "../adapter/install.js";
 
-import { getStage, stageNumber, TOTAL_STAGES } from "../pipeline/stages.js";
+import { findStage, getStage, stageNumber, TOTAL_STAGES } from "../pipeline/stages.js";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -80,7 +80,7 @@ export async function startCommand(opts: StartOptions): Promise<void> {
   await assertRunnable(projectDir);
 
   // --- state ---
-  let policy = readGatePolicy(projectDir);
+  let policy = reconcileGatePolicy(projectDir, readGatePolicy(projectDir));
 
   if (opts.mode) {
     const mode = parseMode(opts.mode);
@@ -258,6 +258,31 @@ async function runWithTui(args: {
 // ---------------------------------------------------------------------------
 // Preconditions
 // ---------------------------------------------------------------------------
+
+/**
+ * Give every current stage a gate entry before the run starts.
+ *
+ * `gateActionFor` defaults an unrecognised stage to `await_human`, which is the
+ * right instinct for something genuinely unknown but wrong for a stage this
+ * version simply added: an autonomous headless run would stall on it with no
+ * one to approve. A policy written by an earlier version gets the missing keys
+ * filled in from its own mode's preset, and any human override it already
+ * carries is left alone.
+ */
+function reconcileGatePolicy(projectDir: string, policy: GatePolicy): GatePolicy {
+  const defaults = generateGatePreset(policy.mode);
+  const missing = PIPELINE_STAGES.filter((stage) => policy.gates[stage] === undefined);
+  if (missing.length === 0) return policy;
+
+  const gates = { ...policy.gates };
+  for (const stage of missing) {
+    gates[stage] = defaults.gates[stage] ?? { policy: "auto" };
+  }
+  const reconciled: GatePolicy = { ...policy, gates };
+  writeGatePolicy(projectDir, reconciled);
+  log.info(`Gate policy extended with ${missing.length} stage(s) added since this run started.`);
+  return reconciled;
+}
 
 async function assertRunnable(projectDir: string): Promise<void> {
   if (!(await hasOpencodeCli())) {
@@ -452,7 +477,11 @@ export async function statusCommand(opts: StatusOptions): Promise<void> {
     return;
   }
 
-  const stage = getStage(state.current_stage);
+  // A run recorded by an earlier pipeline vocabulary must still be reportable.
+  const stage = findStage(state.current_stage);
+  const stageLabel = stage
+    ? `${stage.name} (${stageNumber(stage.id)}/${TOTAL_STAGES})`
+    : `${state.current_stage} (retired stage)`;
   const completed = history.stages.filter((s) => s.status === "completed" && (!state.plan || state.plan.stages.includes(s.stage_id))).length;
   const branch = await getCurrentBranch(projectDir).catch(() => state.run_branch);
 
@@ -462,7 +491,7 @@ export async function statusCommand(opts: StatusOptions): Promise<void> {
   printKeyValues([
     ["Run", state.run_id],
     ["Mode", state.mode],
-    ["Stage", `${stage.name} (${stageNumber(stage.id)}/${TOTAL_STAGES}) — ${state.stage_status}`],
+    ["Stage", `${stageLabel} — ${state.stage_status}`],
     ["Progress", `${completed}/${state.plan?.stages.length ?? TOTAL_STAGES} selected stages complete`],
     ["Branch", branch],
     ["Template", state.template_version],

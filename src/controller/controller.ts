@@ -49,6 +49,7 @@ import {
   type StageRecord,
 } from "../state/schema.js";
 import { planStages } from "../state/plans.js";
+import { PIPELINE_STAGES, isRetiredStage } from "../state/gate-presets.js";
 import { resolveStageTimeoutMultiplier } from "../state/timeout.js";
 
 import { remainingStages, stageNumber, TOTAL_STAGES } from "../pipeline/stages.js";
@@ -185,10 +186,26 @@ export class PipelineController {
     }
     this.materialVerdict = this.recoverVerdict();
 
+    // A run parked on a stage this version no longer runs is readable but not
+    // resumable: reinterpreting its position against a different pipeline
+    // would silently change what the run promised to do.
+    const advanced = state.stage_status === "completed" || state.stage_status === "approved";
+    if (isRetiredStage(state.current_stage) && !advanced) {
+      throw new PaperRunError(
+        `Run ${state.run_id} is parked on "${state.current_stage}", a stage this version of paper-run no longer runs.`,
+        {
+          hint: "Its history and checkpoints stay readable with `paper-run status`. Start a new run to continue the paper under the current pipeline.",
+        },
+      );
+    }
+
     const plannedStages = state.plan ? planStages(state.plan) : undefined;
     const stages = remainingStages(
-      state.current_stage,
-      state.stage_status === "completed" || state.stage_status === "approved",
+      // A completed retired stage still has to yield a starting point; fall
+      // back to the first current stage rather than indexing a vocabulary that
+      // no longer exists.
+      isRetiredStage(state.current_stage) ? PIPELINE_STAGES[0]! : state.current_stage,
+      isRetiredStage(state.current_stage) ? false : advanced,
     ).filter((stage) => plannedStages?.includes(stage.id) ?? true);
 
     if (stages.length === 0) {
