@@ -311,6 +311,22 @@ async function runValidator(
       };
     }
 
+    case "section_substance": {
+      const stats = inspectManuscriptSources(projectDir);
+      const empty = stats.placeholderSections;
+
+      return {
+        name: "section-substance",
+        passed: empty.length === 0,
+        required: validator.required,
+        message:
+          empty.length === 0
+            ? undefined
+            : `${validator.message}: ${empty.join(", ")} — write the section, or drop it from `
+              + `PAPER.md ### Section responsibilities so the manuscript stops inputting it`,
+      };
+    }
+
     case "figure_coverage": {
       const stats = inspectManuscriptSources(projectDir);
       // Nothing supplied means nothing to place.

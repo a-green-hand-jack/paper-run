@@ -77,6 +77,15 @@ export type Validator =
   /** Supplied figure assets are placed in the manuscript, or explained. */
   | { type: "figure_coverage"; required: boolean; message: string }
   /**
+   * No section the manuscript inputs is a placeholder.
+   *
+   * The independent review found a `\input{sections/10_appendix}` over a file
+   * whose only body was the word TODO. That is worth catching, and it is not
+   * worth a review half to catch: a placeholder is mechanically recognisable,
+   * so the check belongs where the writing happens.
+   */
+  | { type: "section_substance"; required: boolean; message: string }
+  /**
    * The plan enumerated the experimental apparatus it read out of the materials.
    *
    * `minEntities` is the floor on how many models, datasets, benchmarks,
@@ -398,6 +407,11 @@ export const STAGES: Record<StageId, Stage> = {
         required: true,
         message: "Supplied figures are missing from the manuscript",
       },
+      {
+        type: "section_substance",
+        required: true,
+        message: "The manuscript inputs a section that says nothing",
+      },
       // Before the length check, so length can be measured rather than
       // estimated -- and so a manuscript that does not compile is caught by
       // the stage that wrote it rather than eight stages later.
@@ -523,7 +537,22 @@ export const STAGES: Record<StageId, Stage> = {
     // The final whitelist pass belongs here, over text that is finished.
     sidecarSkills: [".agents/skills/lieflat-less-ai-tone/SKILL.md"],
     requiredReading: [".agents/vendor/ccfa-skills/ccf-paper-writer/references/prose-quality-guardrails.md"],
+    // "Re-read and fix what is inconsistent" was the whole brief, and it
+    // produced nothing: the independent review that followed found a
+    // TODO-only appendix, a figure caption with no experimental conditions,
+    // and a caption omitting a curve its own figure plots -- all of them
+    // visible to anyone re-reading the draft. A review without a checklist is
+    // a review of whatever caught the eye.
     expectedOutputs: [
+      "Every section checked against its own row in PAPER.md ### Section responsibilities: "
+        + "does it do the reader task that row assigns, and does it preserve what the row says "
+        + "must be preserved",
+      "Every float checked against its caption: a caption states the conditions of what it "
+        + "shows — the model, the configuration, the setting — and names every series the "
+        + "figure actually plots",
+      "Every entity in EXPERIMENTS.md ## Experimental setup inventory that this paper used "
+        + "named in the prose where it belongs, not folded into an aggregate the reader "
+        + "cannot unpack",
       "Internal inconsistencies between sections resolved",
       "Terminology and notation unified against PAPER_INTERFACES.md",
       "Remaining TODO markers still visible, not quietly deleted",
@@ -581,6 +610,10 @@ export const STAGES: Record<StageId, Stage> = {
       "Both files must describe the same findings — the JSON is the record the "
         + "revision stage is checked against, the Markdown is for the human",
       "Unsupported claims and fabrication risks called out explicitly",
+      "A verdict on every section named in PAPER.md ### Section responsibilities, against "
+        + "that row and against what a section of its kind must contain — a section that is "
+        + "internally consistent and uniformly missing something a reader needs is the "
+        + "failure a consistency review is least likely to see, so look for it deliberately",
       "Findings only — this stage reports, it does not fix",
     ],
     validators: [

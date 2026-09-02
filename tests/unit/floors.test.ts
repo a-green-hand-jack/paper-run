@@ -320,3 +320,52 @@ describe("citationFloor", () => {
     expect(citationFloor({ bibKeys: Array(500).fill("k") } as never)).toBe(12);
   });
 });
+
+describe("section substance", () => {
+  const validator: Validator = {
+    type: "section_substance",
+    required: true,
+    message: "The manuscript inputs a section that says nothing",
+  };
+
+  it("fails the appendix pwb-0011 shipped: an input over a file containing only TODO", async () => {
+    section("02_intro", "Pruning is a deployment transformation with security consequences.\n");
+    section("10_appendix", "TODO\n");
+    main(["02_intro", "10_appendix"]);
+
+    const result = await validateStage(stageWith(validator), tmpDir);
+
+    expect(result.passed).toBe(false);
+    expect(result.checks[0]!.message).toContain("10_appendix");
+  });
+
+  it("does not mistake a sanctioned TODO marker inside real prose for a placeholder", async () => {
+    section(
+      "06_exp",
+      "We report attack success rate for three models.\n"
+        + "% TODO(paper-run): needs the ablation number, absent from EXPERIMENTS.md\n"
+        + "The pruned checkpoints behave differently from the dense ones.\n",
+    );
+    main(["06_exp"]);
+
+    const result = await validateStage(stageWith(validator), tmpDir);
+    expect(result.passed).toBe(true);
+  });
+
+  it("ignores a placeholder the manuscript does not input", async () => {
+    section("02_intro", "Real prose about pruning and deployment.\n");
+    section("07_limitations", "TODO\n");
+    main(["02_intro"]);
+
+    const result = await validateStage(stageWith(validator), tmpDir);
+    expect(result.passed).toBe(true);
+  });
+
+  it("fails a section that is only LaTeX scaffolding with no prose", async () => {
+    section("08_conclusion", "\\section{Conclusion}\\label{sec:conclusion}\n");
+    main(["08_conclusion"]);
+
+    const result = await validateStage(stageWith(validator), tmpDir);
+    expect(result.passed).toBe(false);
+  });
+});

@@ -27,6 +27,16 @@ export interface ManuscriptStats {
   citedKeys: string[];
   /** How many section files contain at least one citation. */
   filesWithCitations: number;
+  /**
+   * Section stems the manuscript inputs whose body is a placeholder.
+   *
+   * A `% TODO(paper-run):` marker inside real prose is the sanctioned way to
+   * record a gap and is not a placeholder. A file whose entire body is the
+   * word TODO is: pwb-0011 shipped `\\input{sections/10_appendix}` over a file
+   * containing nothing else, and it took a 374,000-token review half to
+   * notice.
+   */
+  placeholderSections: string[];
   /** Keys defined in the bibliography. */
   bibKeys: string[];
   /** Cited keys with no entry in the bibliography — always a hard error. */
@@ -60,6 +70,7 @@ export function inspectManuscriptSources(projectDir: string): ManuscriptStats {
 
   let words = 0;
   let filesWithCitations = 0;
+  const placeholderSections: string[] = [];
   const citedKeys = new Set<string>();
   const includedGraphics: string[] = [];
   let tableEnvironments = 0;
@@ -71,7 +82,9 @@ export function inspectManuscriptSources(projectDir: string): ManuscriptStats {
     if (!existsSync(path)) continue;
     const body = read(path);
 
-    words += countWords(proseOnly(body));
+    const prose = proseOnly(body);
+    if (isPlaceholder(body, prose)) placeholderSections.push(stem);
+    words += countWords(prose);
     const keys = citationKeys(body);
     if (keys.length > 0) filesWithCitations += 1;
     for (const key of keys) citedKeys.add(key);
@@ -95,6 +108,7 @@ export function inspectManuscriptSources(projectDir: string): ManuscriptStats {
     inputs,
     citedKeys: cited,
     filesWithCitations,
+    placeholderSections,
     bibKeys,
     undefinedKeys: bibKeys.length === 0 ? [] : cited.filter((key) => !bibKeys.includes(key)),
     includedGraphics,
@@ -169,6 +183,39 @@ export function wordTarget(pages: number): { min: number; max: number } {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * A section body that says nothing.
+ *
+ * Empty, or made up entirely of placeholder tokens and punctuation. Sanctioned
+ * `% TODO(paper-run):` markers never reach here — `proseOnly` strips comments,
+ * so a file of real prose carrying one still reads as prose.
+ */
+function isPlaceholder(body: string, prose: string): boolean {
+  // `proseOnly` drops the command but keeps its argument, so a file holding
+  // only `\section{Conclusion}` arrives here as the word "Conclusion". A
+  // heading is not prose: subtract the titles the body declares.
+  const headings = [...body.matchAll(/\\(?:sub)*(?:section|paragraph)\*?\s*\{([^{}]*)\}/g)]
+    .flatMap((match) => (match[1] ?? "").split(/[^A-Za-z]+/))
+    .filter((word) => word.length > 0)
+    .map((word) => word.toLowerCase());
+
+  const words = prose
+    .replace(/\\[a-zA-Z@]+\*?(\[[^\]]*\])?(\{[^{}]*\})?/g, " ")
+    .split(/[^A-Za-z]+/)
+    .filter((word) => word.length > 0);
+
+  const remaining = [...words];
+  for (const heading of headings) {
+    const index = remaining.findIndex((word) => word.toLowerCase() === heading);
+    if (index !== -1) remaining.splice(index, 1);
+  }
+
+  if (remaining.length === 0) return true;
+  return remaining.every((word) =>
+    /^(todo|tbd|fixme|placeholder|lorem|ipsum|xxx|na)$/i.test(word),
+  );
+}
 
 function read(path: string): string {
   try {
