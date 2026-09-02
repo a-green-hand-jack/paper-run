@@ -284,6 +284,26 @@ describe("supplied inputs", () => {
     expect(result.failures.join(" ")).toContain("materials/references.bib");
   });
 
+  it("does not treat a contract the pipeline writes as a supplied input", () => {
+    // discoverMaterials answers "what is there to write from", and a contract
+    // carrying evidence counts. The baseline answers a different question --
+    // "what may this run not alter". Conflating them blocked a live run:
+    // evidence_reconciliation, whose whole job is to fill in EXPERIMENTS.md
+    // ## Claim-evidence bindings, failed for modifying a supplied input.
+    mkdirSync(join(tmpDir, "materials"), { recursive: true });
+    writeFileSync(join(tmpDir, "materials", "table.tex"), "1 & 2");
+    writeFileSync(join(tmpDir, "BRIEF.md"), "brief");
+    writeFileSync(join(tmpDir, "EXPERIMENTS.md"), "# Experiments\n\n## Experiment overview\n\nTODO\n");
+
+    const recorded = Object.keys(captureInputBaseline(tmpDir).files);
+
+    expect(recorded).not.toContain("EXPERIMENTS.md");
+    // The brief stays an input: it is the human's statement of intent, and
+    // nothing downstream is meant to edit it.
+    expect(recorded).toContain("BRIEF.md");
+    expect(recorded).toContain("materials/table.tex");
+  });
+
   it("passes a run recorded before input baselines existed", async () => {
     const result = await validateStage(
       stageWith({ type: "inputs_unmodified", required: true, message: "inputs changed" }),

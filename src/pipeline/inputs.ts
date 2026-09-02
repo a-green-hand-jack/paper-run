@@ -23,6 +23,29 @@ import type { InputBaseline } from "../state/schema.js";
 const ALWAYS_INPUTS = ["BRIEF.md"];
 
 /**
+ * Contracts the pipeline writes, which `discoverMaterials` also reports.
+ *
+ * Material discovery answers "what is there to write from", and a contract
+ * carrying evidence counts. This answers a different question — "what may this
+ * run not alter" — and a contract the pipeline exists to fill in is the wrong
+ * answer. Conflating them blocked a live run: `evidence_reconciliation`, whose
+ * whole job is to write `EXPERIMENTS.md ## Claim-evidence bindings`, failed for
+ * modifying a supplied input.
+ *
+ * `BRIEF.md` stays an input. It is the human's statement of intent, nothing
+ * downstream is meant to edit it, and the locked-contract check already
+ * enforces that independently.
+ */
+const PIPELINE_OWNED_CONTRACTS = new Set([
+  "EXPERIMENTS.md",
+  "PAPER.md",
+  "PAPER_INTERFACES.md",
+  "PUBLICATION.md",
+  "DECISIONS.md",
+  "REFERENCES.md",
+]);
+
+/**
  * Digest every supplied input this run must not alter.
  *
  * The bibliography is included only when it looks supplied rather than
@@ -47,7 +70,10 @@ export function captureInputBaseline(projectDir: string): InputBaseline {
   };
 
   for (const relative of ALWAYS_INPUTS) record(relative);
-  for (const relative of discoverMaterials(projectDir, 400)) record(relative);
+  for (const relative of discoverMaterials(projectDir, 400)) {
+    if (PIPELINE_OWNED_CONTRACTS.has(relative)) continue;
+    record(relative);
+  }
 
   const bibliography = "paper/refs.bib";
   if (isSuppliedBibliography(root, bibliography)) record(bibliography);
