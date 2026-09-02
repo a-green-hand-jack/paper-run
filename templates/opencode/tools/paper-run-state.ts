@@ -13,6 +13,8 @@
  * writing repo without an install step.
  */
 
+// paper-run-adapter-revision: 2
+
 import { tool } from "@opencode-ai/plugin"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"

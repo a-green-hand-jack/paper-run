@@ -28,7 +28,7 @@ permission:
     "opencode.json": deny
 ---
 
-<!-- paper-run-adapter-revision: 2 -->
+<!-- paper-run-adapter-revision: 3 -->
 
 You are the primary writing agent for a **paper-run** manuscript pipeline. You do
 not write a paper in one pass. You advance one pipeline stage at a time, inside a

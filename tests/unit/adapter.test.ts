@@ -487,3 +487,31 @@ describe("isAdapterInstalled", () => {
     expect(isAdapterInstalled(tmpDir)).toBe(false);
   });
 });
+
+describe("template staleness", () => {
+  it("recognises a revision marker in both comment syntaxes", async () => {
+    // Markdown templates carry an HTML comment, the tool and plugin a line
+    // comment. Matching only the former meant a .ts template could never age
+    // out of an existing repository, and an upgrade would silently do nothing.
+    await installAdapter(tmpDir);
+
+    const writer = readFileSync(join(tmpDir, OPENCODE_DIR, "agent", "paper-writer.md"), "utf-8");
+    const tool = readFileSync(join(tmpDir, OPENCODE_DIR, "tools", "paper-run-state.ts"), "utf-8");
+
+    expect(writer).toMatch(/<!--\s*paper-run-adapter-revision:\s*\d+\s*-->/);
+    expect(tool).toMatch(/\/\/\s*paper-run-adapter-revision:\s*\d+/);
+  });
+
+  it("refreshes an installed file whose revision has fallen behind", async () => {
+    await installAdapter(tmpDir);
+    const toolPath = join(tmpDir, OPENCODE_DIR, "tools", "paper-run-state.ts");
+
+    // Simulate a repository installed from an older template.
+    writeFileSync(toolPath, "// paper-run-adapter-revision: 1\nconst PIPELINE_STAGES = []\n");
+    await installAdapter(tmpDir);
+
+    const refreshed = readFileSync(toolPath, "utf-8");
+    expect(refreshed).toContain("paper_plan");
+    expect(refreshed).not.toContain("revision: 1");
+  });
+});

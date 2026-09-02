@@ -147,7 +147,16 @@ function listFilesRecursive(dir: string, prefix = ""): string[] {
 }
 
 /** Marks a template revision so an installed copy can be recognised as stale. */
-const REVISION_MARKER = /<!--\s*paper-run-adapter-revision:\s*(\d+)\s*-->/;
+/**
+ * The template revision, in whichever comment syntax the file speaks.
+ *
+ * Markdown templates carry an HTML comment; the TypeScript tool and plugin
+ * carry a line comment. Matching only the former meant the state tool could
+ * never age out of an existing repository — it would keep reporting a stage
+ * list the controller had stopped using, which is the quietest possible way
+ * for an upgrade to do nothing.
+ */
+const REVISION_MARKER = /(?:<!--|\/\/)\s*paper-run-adapter-revision:\s*(\d+)\s*(?:-->)?/;
 
 /**
  * True when an installed file predates the template's current revision.

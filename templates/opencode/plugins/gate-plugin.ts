@@ -27,6 +27,8 @@
  * Installed by paper-run. Kept dependency-free (node:fs only).
  */
 
+// paper-run-adapter-revision: 2
+
 import type { Plugin } from "@opencode-ai/plugin"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
