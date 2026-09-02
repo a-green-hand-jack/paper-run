@@ -350,9 +350,12 @@ describe("isAdapterInstalled", () => {
     // positioning records venue knowledge, revision records how it disposed of
     // each review finding. Neither reaches skills, tools, or controller state.
     expect(writer).toContain(
-      'edit:\n    "*": allow\n    ".git/**": deny\n    ".agents/**": deny\n    ".agents/knowledge/venues/**": allow\n    ".opencode/**": deny\n    ".paper-run/**": deny\n    ".paper-run/assessment.json": allow\n    ".paper-run/review-findings.json": allow\n    "AGENTS.md": deny\n    "Makefile": deny\n    "opencode.json": deny',
+      'edit:\n    "*": allow\n    ".git/**": deny\n    "BRIEF.md": deny\n    "materials/**": deny\n    "evidence/**": deny\n    "data/**": deny\n    ".agents/**": deny\n    ".agents/knowledge/venues/**": allow\n    ".opencode/**": deny\n    ".paper-run/**": deny\n    ".paper-run/assessment.json": allow\n    ".paper-run/review-findings.json": allow\n    "AGENTS.md": deny\n    "Makefile": deny\n    "opencode.json": deny',
     );
     expect(writer).not.toContain('".agents/tools/**": allow');
+    // Supplied inputs are evidence, not workspace: a remediation turn once
+    // satisfied a failing checker by editing the bibliography it was given.
+    expect(writer).toContain('"materials/**": deny');
     expect(writer).not.toContain('".agents/skills/**": allow');
     expect(writerFrontmatter).not.toContain("python3 .agents/");
     expect(writerFrontmatter).not.toContain("bash .agents/tools/");

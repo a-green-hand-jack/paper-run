@@ -146,6 +146,35 @@ function listFilesRecursive(dir: string, prefix = ""): string[] {
   return out;
 }
 
+/** Marks a template revision so an installed copy can be recognised as stale. */
+const REVISION_MARKER = /<!--\s*paper-run-adapter-revision:\s*(\d+)\s*-->/;
+
+/**
+ * True when an installed file predates the template's current revision.
+ *
+ * Install is non-destructive so a human's edit to an agent file survives an
+ * upgrade. The cost is that a template change never reaches an existing
+ * repository — which for behaviour-carrying files like the writer's
+ * instructions means an upgrade silently changes nothing, and any measurement
+ * of the change reports "no effect" for the wrong reason.
+ *
+ * A revision marker resolves both: files carrying one are refreshed when the
+ * template's number is higher, and files without one keep the old
+ * skip-unless-force behaviour.
+ */
+function isStaleAdapterFile(sourcePath: string, targetPath: string): boolean {
+  const source = readFileSync(sourcePath, "utf-8").match(REVISION_MARKER);
+  if (!source) return false;
+  let installed: RegExpMatchArray | null;
+  try {
+    installed = readFileSync(targetPath, "utf-8").match(REVISION_MARKER);
+  } catch {
+    return false;
+  }
+  const current = Number(installed?.[1] ?? 0);
+  return Number(source[1]) > current;
+}
+
 /**
  * Write one template file, honouring the skip-unless-force rule.
  * Returns whether the file was written.
@@ -156,7 +185,7 @@ function writeTemplate(
   values: Record<string, string>,
   force: boolean,
 ): boolean {
-  if (existsSync(targetPath) && !force) return false;
+  if (existsSync(targetPath) && !force && !isStaleAdapterFile(sourcePath, targetPath)) return false;
 
   mkdirSync(dirname(targetPath), { recursive: true });
   writeFileSync(targetPath, substitutePlaceholders(readFileSync(sourcePath, "utf-8"), values));

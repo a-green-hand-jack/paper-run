@@ -1,12 +1,10 @@
 /**
- * The floor checks, against the shape of the manuscript that defeated the
- * structural ones.
+ * The floors under a finished manuscript.
  *
- * On PaperWrite-Bench pwb-0011 a four-page manuscript with zero citations and
- * zero figures passed thirteen stages and was tagged as a candidate, from
- * materials that supported nine pages and twenty real citations. Every number
- * in these fixtures is taken from that run: 52 bibliography entries, 3 supplied
- * figures, a nine-page brief, 1,247 words of prose.
+ * Every case here is something a run actually shipped on PaperWrite-Bench
+ * pwb-0011 while passing thirteen stages: no citations, none of the three
+ * supplied figures, four pages against a nine-page brief, two blockers filed
+ * away as deferred. Structural validators cannot see any of it.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -14,16 +12,16 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync } from "node:f
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+import { validateStage } from "../../src/pipeline/validators.js";
+import { STAGES } from "../../src/pipeline/stages.js";
+import type { Stage, Validator } from "../../src/pipeline/stages.js";
 import {
   inspectManuscriptSources,
   citationFloor,
   pageBudget,
   wordTarget,
 } from "../../src/pipeline/manuscript.js";
-import { STAGES } from "../../src/pipeline/stages.js";
-import type { Stage, Validator } from "../../src/pipeline/stages.js";
-import { validateStage } from "../../src/pipeline/validators.js";
-import { captureInputBaseline } from "../../src/pipeline/inputs.js";
+import { captureInputBaseline, isSuppliedBibliography } from "../../src/pipeline/inputs.js";
 import { writeInputBaseline } from "../../src/state/store.js";
 import { PAPER_RUN_DIR } from "../../src/utils/constants.js";
 
@@ -39,241 +37,266 @@ afterEach(() => {
   rmSync(tmpDir, { recursive: true, force: true });
 });
 
-/** A 52-entry bibliography, as pwb-0011 supplied. */
-function writeBib(count = 52): void {
+function bib(count: number): void {
   const entries = Array.from(
     { length: count },
-    (_, i) => `@inproceedings{key${i},\n  title = {Work ${i}},\n  year = {2024},\n}`,
+    (_, i) => `@article{key${i},\n  title = {Work ${i}},\n  year = {2026}\n}`,
   );
   writeFileSync(join(tmpDir, "paper", "refs.bib"), entries.join("\n\n"));
 }
 
-function writeManuscript(sections: Record<string, string>): void {
-  const stems = Object.keys(sections);
-  for (const [stem, body] of Object.entries(sections)) {
-    writeFileSync(join(tmpDir, "paper", "sections", `${stem}.tex`), body);
-  }
+function section(stem: string, body: string): void {
+  writeFileSync(join(tmpDir, "paper", "sections", `${stem}.tex`), body);
+}
+
+function main(stems: string[]): void {
   writeFileSync(
     join(tmpDir, "paper", "main.tex"),
-    [
-      "\\documentclass{article}",
-      "\\begin{document}",
-      ...stems.map((stem) => `\\input{sections/${stem}}`),
-      "\\end{document}",
-      "",
-    ].join("\n"),
+    ["\\documentclass{article}", "\\begin{document}", ...stems.map((s) => `\\input{sections/${s}}`), "\\end{document}", ""].join("\n"),
   );
 }
 
-function words(count: number): string {
-  return Array.from({ length: count }, (_, i) => `word${i % 40}`).join(" ");
+function stageWith(validator: Validator): Stage {
+  return { ...STAGES.revision, validators: [validator] };
 }
 
-function stageWith(...validators: Validator[]): Stage {
-  return { ...STAGES.full_draft, validators };
-}
+const prose = (words: number, extra = "") =>
+  `${Array.from({ length: words }, () => "evidence").join(" ")} ${extra}`;
 
-describe("citation_floor", () => {
-  const validator: Validator = {
-    type: "citation_floor",
-    minFiles: 3,
-    required: true,
-    message: "does not engage the bibliography",
-  };
+describe("citation floor", () => {
+  it("fails a manuscript that cites nothing against a real bibliography", async () => {
+    bib(52);
+    section("02_intro", prose(300));
+    main(["02_intro"]);
 
-  it("rejects the zero-citation manuscript that passed thirteen stages", async () => {
-    writeBib();
-    writeManuscript({ "02_intro": words(300), "03_method": words(300) });
+    const result = await validateStage(
+      stageWith({ type: "citation_floor", required: true, message: "too few citations" }),
+      tmpDir,
+    );
 
-    const stats = inspectManuscriptSources(tmpDir);
-    expect(stats.bibKeys).toHaveLength(52);
-    expect(citationFloor(stats)).toBe(11);
-
-    const result = await validateStage(stageWith(validator), tmpDir);
     expect(result.passed).toBe(false);
-    expect(result.failures.join(" ")).toContain("cites 0 distinct works");
+    // 52 entries sets the floor at 11; the point is that 0 is not a paper.
+    expect(result.failures.join(" ")).toContain("floor of 11");
   });
 
-  it("accepts a manuscript that cites the literature it was given", async () => {
-    writeBib();
-    const cites = (from: number, to: number) =>
-      Array.from({ length: to - from }, (_, i) => `\\cite{key${from + i}}`).join(" ");
-    writeManuscript({
-      "02_intro": `${words(200)} ${cites(0, 5)}`,
-      "03_related": `${words(200)} ${cites(5, 10)}`,
-      "04_method": `${words(200)} ${cites(10, 12)}`,
-    });
+  it("stays quiet when the repository supplies no bibliography to cite", async () => {
+    section("02_intro", prose(300));
+    main(["02_intro"]);
 
-    expect((await validateStage(stageWith(validator), tmpDir)).passed).toBe(true);
+    const result = await validateStage(
+      stageWith({ type: "citation_floor", required: true, message: "too few citations" }),
+      tmpDir,
+    );
+    expect(result.passed).toBe(true);
   });
 
-  it("rejects an invented citation key even when the floor is met", async () => {
-    writeBib();
-    const real = Array.from({ length: 12 }, (_, i) => `\\cite{key${i}}`).join(" ");
-    writeManuscript({
-      "02_intro": `${words(100)} ${real}`,
-      "03_related": `${words(100)} \\cite{key1}`,
-      "04_method": `${words(100)} \\cite{smith2024invented}`,
-    });
+  it("passes once the manuscript reaches the floor", async () => {
+    bib(52);
+    const keys = Array.from({ length: 11 }, (_, i) => `\\cite{key${i}}`).join(" ");
+    section("02_intro", `${prose(200)} ${keys}`);
+    main(["02_intro"]);
 
-    const result = await validateStage(stageWith(validator), tmpDir);
+    const result = await validateStage(
+      stageWith({ type: "citation_floor", required: true, message: "too few citations" }),
+      tmpDir,
+    );
+    expect(result.passed).toBe(true);
+  });
+
+  it("fails a cited key that is not in the bibliography", async () => {
+    bib(52);
+    const keys = Array.from({ length: 11 }, (_, i) => `\\cite{key${i}}`).join(" ");
+    section("02_intro", `${prose(200)} ${keys} \\cite{invented2026}`);
+    main(["02_intro"]);
+
+    const result = await validateStage(
+      stageWith({ type: "citation_floor", required: true, message: "bad citations" }),
+      tmpDir,
+    );
     expect(result.passed).toBe(false);
-    expect(result.failures.join(" ")).toContain("smith2024invented");
+    expect(result.failures.join(" ")).toContain("invented2026");
   });
 
-  it("requires citations to be spread across sections, not piled into one", async () => {
-    writeBib();
-    const all = Array.from({ length: 12 }, (_, i) => `\\cite{key${i}}`).join(" ");
-    writeManuscript({ "02_intro": `${words(200)} ${all}`, "03_method": words(200) });
+  it("notices when every citation is crammed into one section", async () => {
+    bib(52);
+    const keys = Array.from({ length: 12 }, (_, i) => `\\cite{key${i}}`).join(" ");
+    section("02_intro", `${prose(200)} ${keys}`);
+    section("03_method", prose(200));
+    main(["02_intro", "03_method"]);
 
-    const result = await validateStage(stageWith(validator), tmpDir);
+    const result = await validateStage(
+      stageWith({ type: "citation_floor", minFiles: 3, required: true, message: "thin" }),
+      tmpDir,
+    );
     expect(result.passed).toBe(false);
-    expect(result.failures.join(" ")).toContain("section file(s)");
+    expect(result.failures.join(" ")).toContain("section");
   });
 
-  it("is vacuous for a repository with no bibliography yet", async () => {
-    writeManuscript({ "02_intro": words(200) });
-    expect(citationFloor(inspectManuscriptSources(tmpDir))).toBe(0);
-    expect((await validateStage(stageWith(validator), tmpDir)).passed).toBe(true);
+  it("counts only sections the document actually inputs", () => {
+    bib(10);
+    section("02_intro", `${prose(50)} \\cite{key1}`);
+    // Left on disk but dropped from main.tex: not part of this paper.
+    section("07_limitations", `${prose(50)} \\cite{key2} \\cite{key3}`);
+    main(["02_intro"]);
+
+    expect(inspectManuscriptSources(tmpDir).citedKeys).toEqual(["key1"]);
   });
 });
 
-describe("manuscript_length", () => {
-  const validator: Validator = {
-    type: "manuscript_length",
-    required: true,
-    message: "short of its page budget",
-  };
-
-  function writeBrief(text: string): void {
-    writeFileSync(join(tmpDir, "BRIEF.md"), `# Paper Brief\n\n## Constraints\n\n- ${text}\n`);
-  }
-
-  it("reads a plural page budget out of the brief", () => {
-    // The brief is byte-immutable under the locked-contract check, so this
-    // number cannot be edited into agreement by the agent it constrains.
-    writeBrief("Language and length limits: English; suitable for nine pages of body text");
+describe("page budget", () => {
+  it("reads the budget from the brief, which the model cannot edit", () => {
+    writeFileSync(
+      join(tmpDir, "BRIEF.md"),
+      "## Constraints\n\n- Language and length limits: a complete paper suitable for nine pages of body text.\n",
+    );
     expect(pageBudget(tmpDir)).toBe(9);
-    expect(wordTarget(9).min).toBe(3465);
   });
 
-  it("rejects the 1,247-word draft against a nine-page brief", async () => {
-    writeBrief("suitable for nine pages of single-column body text");
-    writeManuscript({ "02_intro": words(1247) });
-
-    const result = await validateStage(stageWith(validator), tmpDir);
-    expect(result.passed).toBe(false);
-    expect(result.failures.join(" ")).toContain("9-page budget");
+  it("prefers a venue file that states a real number", () => {
+    mkdirSync(join(tmpDir, ".agents", "knowledge", "venues"), { recursive: true });
+    writeFileSync(join(tmpDir, ".agents/knowledge/venues/iclr-2026.md"), "- main_text: 8\n");
+    writeFileSync(join(tmpDir, "BRIEF.md"), "suitable for nine pages\n");
+    expect(pageBudget(tmpDir)).toBe(8);
   });
 
-  it("accepts a manuscript that uses the space", async () => {
-    writeBrief("suitable for nine pages of single-column body text");
-    writeManuscript({ "02_intro": words(2600), "03_method": words(2500) });
-    expect((await validateStage(stageWith(validator), tmpDir)).passed).toBe(true);
+  it("ignores a venue field that honestly says it is unverified", () => {
+    mkdirSync(join(tmpDir, ".agents", "knowledge", "venues"), { recursive: true });
+    writeFileSync(join(tmpDir, ".agents/knowledge/venues/iclr-2026.md"), "- main_text: UNVERIFIED\n");
+    writeFileSync(join(tmpDir, "BRIEF.md"), "suitable for nine pages\n");
+    expect(pageBudget(tmpDir)).toBe(9);
   });
 
-  it("degrades to no check when nobody stated a budget", async () => {
-    writeManuscript({ "02_intro": words(100) });
+  it("returns nothing when nobody stated a budget", () => {
     expect(pageBudget(tmpDir)).toBeNull();
-    // "No check" rather than "wrong check": a missed budget must not fail a run.
-    expect((await validateStage(stageWith(validator), tmpDir)).passed).toBe(true);
+  });
+
+  it("fails a manuscript far short of the budget and passes one that reaches it", async () => {
+    writeFileSync(join(tmpDir, "BRIEF.md"), "suitable for nine pages\n");
+    const check = stageWith({ type: "manuscript_length", required: true, message: "too short" });
+
+    section("02_intro", prose(1738));
+    main(["02_intro"]);
+    expect((await validateStage(check, tmpDir)).passed).toBe(false);
+
+    section("02_intro", prose(wordTarget(9).min + 50));
+    expect((await validateStage(check, tmpDir)).passed).toBe(true);
+  });
+
+  it("checks nothing when no budget was stated", async () => {
+    section("02_intro", prose(50));
+    main(["02_intro"]);
+    const result = await validateStage(
+      stageWith({ type: "manuscript_length", required: true, message: "too short" }),
+      tmpDir,
+    );
+    expect(result.passed).toBe(true);
   });
 });
 
-describe("figure_coverage", () => {
-  const validator: Validator = {
-    type: "figure_coverage",
-    required: true,
-    message: "supplied figures are missing",
-  };
-
-  function writeFigures(names: string[]): void {
-    const dir = join(tmpDir, "paper", "figures");
-    mkdirSync(dir, { recursive: true });
-    for (const name of names) writeFileSync(join(dir, name), "binary");
+describe("figure coverage", () => {
+  function figures(names: string[]): void {
+    mkdirSync(join(tmpDir, "materials", "figures"), { recursive: true });
+    for (const name of names) writeFileSync(join(tmpDir, "materials", "figures", name), "binary");
   }
 
-  it("rejects a manuscript that places none of the three supplied figures", async () => {
-    writeFigures(["teaser_figure.jpg", "plot.jpg", "plot_horizontal.jpg"]);
-    writeManuscript({ "02_intro": words(300) });
+  it("fails when supplied figures appear nowhere in the manuscript", async () => {
+    figures(["teaser.jpg", "plot.jpg"]);
+    section("02_intro", prose(100));
+    main(["02_intro"]);
 
-    const result = await validateStage(stageWith(validator), tmpDir);
+    const result = await validateStage(
+      stageWith({ type: "figure_coverage", required: true, message: "figures missing" }),
+      tmpDir,
+    );
     expect(result.passed).toBe(false);
-    expect(result.failures.join(" ")).toContain("teaser_figure");
+    expect(result.failures.join(" ")).toContain("teaser");
   });
 
-  it("accepts them once they are placed", async () => {
-    writeFigures(["plot.jpg"]);
-    writeManuscript({
-      "02_intro": `${words(100)}\n\\includegraphics[width=\\linewidth]{figures/plot.jpg}`,
-    });
-    expect((await validateStage(stageWith(validator), tmpDir)).passed).toBe(true);
+  it("passes when the manuscript places them", async () => {
+    figures(["teaser.jpg"]);
+    section("02_intro", `${prose(100)} \\includegraphics[width=\\linewidth]{figures/teaser.jpg}`);
+    main(["02_intro"]);
+
+    const result = await validateStage(
+      stageWith({ type: "figure_coverage", required: true, message: "figures missing" }),
+      tmpDir,
+    );
+    expect(result.passed).toBe(true);
   });
 
-  it("accepts a figure deliberately left out, when the contract says why", async () => {
-    // Deciding against a supplied figure is legitimate; doing it silently is
-    // what this check exists to catch.
-    writeFigures(["plot.jpg"]);
-    writeManuscript({ "02_intro": words(100) });
+  it("accepts a figure the paper argued against, recorded under Unresolved", async () => {
+    figures(["teaser.jpg"]);
+    section("02_intro", prose(100));
+    main(["02_intro"]);
     writeFileSync(
       join(tmpDir, "PAPER.md"),
-      "# Paper\n\n## Unresolved\n\n- plot.jpg has no protocol recorded, so it is not placed.\n",
+      "## Unresolved\n\n- teaser has no protocol behind it, so it is not placed.\n",
     );
-    expect((await validateStage(stageWith(validator), tmpDir)).passed).toBe(true);
+
+    const result = await validateStage(
+      stageWith({ type: "figure_coverage", required: true, message: "figures missing" }),
+      tmpDir,
+    );
+    expect(result.passed).toBe(true);
   });
 
-  it("passes a repository that was supplied no figures", async () => {
-    writeManuscript({ "02_intro": words(100) });
-    expect((await validateStage(stageWith(validator), tmpDir)).passed).toBe(true);
+  it("passes a repository that ships no figures at all", async () => {
+    section("02_intro", prose(100));
+    main(["02_intro"]);
+    expect(
+      (
+        await validateStage(
+          stageWith({ type: "figure_coverage", required: true, message: "figures missing" }),
+          tmpDir,
+        )
+      ).passed,
+    ).toBe(true);
   });
 });
 
-describe("inputs_unmodified", () => {
-  const validator: Validator = {
-    type: "inputs_unmodified",
-    required: true,
-    message: "supplied inputs were modified",
-  };
-
-  function supplyMaterials(): void {
-    mkdirSync(join(tmpDir, "materials"), { recursive: true });
-    writeFileSync(join(tmpDir, "materials", "references.bib"), "@article{a, title={A}}\n");
-    writeFileSync(join(tmpDir, "materials", "table.tex"), "1 & 2\n");
-    writeFileSync(join(tmpDir, "BRIEF.md"), "# Paper Brief\n\nSupplied.\n");
-  }
-
-  it("passes when nothing has touched the evidence", async () => {
-    supplyMaterials();
-    writeInputBaseline(tmpDir, captureInputBaseline(tmpDir));
-    expect((await validateStage(stageWith(validator), tmpDir)).passed).toBe(true);
+describe("supplied inputs", () => {
+  it("treats a read-only bibliography as supplied", () => {
+    bib(3);
+    chmodSync(join(tmpDir, "paper", "refs.bib"), 0o444);
+    expect(isSuppliedBibliography(tmpDir)).toBe(true);
   });
 
-  it("catches a turn that edited a supplied file to satisfy a check", async () => {
-    // On pwb-0011 a remediation turn added a marker to the supplied,
-    // read-only bibliography so a validator would stop complaining.
-    supplyMaterials();
-    writeInputBaseline(tmpDir, captureInputBaseline(tmpDir));
-    writeFileSync(
-      join(tmpDir, "materials", "references.bib"),
-      "% REFERENCE_INTEGRITY_REQUIRED: references/ledger.json\n@article{a, title={A}}\n",
-    );
+  it("leaves an agent-curated bibliography alone", () => {
+    bib(3);
+    expect(isSuppliedBibliography(tmpDir)).toBe(false);
+  });
 
-    const result = await validateStage(stageWith(validator), tmpDir);
+  it("fails once a recorded input changes", async () => {
+    mkdirSync(join(tmpDir, "materials"), { recursive: true });
+    writeFileSync(join(tmpDir, "materials", "references.bib"), "@article{a,title={A}}");
+    writeFileSync(join(tmpDir, "BRIEF.md"), "brief");
+    writeInputBaseline(tmpDir, captureInputBaseline(tmpDir));
+
+    const check = stageWith({ type: "inputs_unmodified", required: true, message: "inputs changed" });
+    expect((await validateStage(check, tmpDir)).passed).toBe(true);
+
+    // The exact move a remediation turn made on pwb-0011: edit the evidence
+    // until the checker agrees.
+    writeFileSync(join(tmpDir, "materials", "references.bib"), "@article{a,title={A}}\n% marker\n");
+
+    const result = await validateStage(check, tmpDir);
     expect(result.passed).toBe(false);
     expect(result.failures.join(" ")).toContain("materials/references.bib");
   });
 
-  it("treats a read-only bibliography as supplied", () => {
-    supplyMaterials();
-    writeFileSync(join(tmpDir, "paper", "refs.bib"), "@article{a, title={A}}\n");
-    chmodSync(join(tmpDir, "paper", "refs.bib"), 0o444);
-
-    const baseline = captureInputBaseline(tmpDir);
-    expect(Object.keys(baseline.files)).toContain("paper/refs.bib");
+  it("passes a run recorded before input baselines existed", async () => {
+    const result = await validateStage(
+      stageWith({ type: "inputs_unmodified", required: true, message: "inputs changed" }),
+      tmpDir,
+    );
+    expect(result.passed).toBe(true);
   });
+});
 
-  it("passes for a run recorded before baselines existed", async () => {
-    supplyMaterials();
-    expect((await validateStage(stageWith(validator), tmpDir)).passed).toBe(true);
+describe("citationFloor", () => {
+  it("scales with the bibliography and stays modest", () => {
+    expect(citationFloor({ bibKeys: [] } as never)).toBe(0);
+    expect(citationFloor({ bibKeys: Array(52).fill("k") } as never)).toBe(11);
+    expect(citationFloor({ bibKeys: Array(500).fill("k") } as never)).toBe(12);
   });
 });

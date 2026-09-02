@@ -171,6 +171,8 @@ export class PipelineController {
   /** Stage associated with the turn currently being driven. */
   private currentStageId = "unknown";
   private stageTimeoutMultiplier = 1;
+  /** One session per stage, so a transcript cannot accumulate across the run. */
+  private readonly stageSessions = new Map<string, string>();
   private turnTelemetry: TurnTelemetry | undefined;
 
   constructor(opts: ControllerOptions) {
@@ -863,7 +865,7 @@ export class PipelineController {
           title: `paper-run independent review: ${stage.id}`,
           directory: this.opts.projectDir,
         })
-      : this.opts.sessionId;
+      : await this.sessionForStage(stage);
     this.activeSessionId = sessionId;
     const before = await getSessionUsage(this.opts.client, sessionId);
     const startedAt = Date.now();
@@ -916,6 +918,52 @@ export class PipelineController {
         filesRead,
       };
       this.activeSessionId = this.opts.sessionId;
+    }
+  }
+
+  /**
+   * The session a stage's turns run in.
+   *
+   * One session used to carry twelve of thirteen stages, every remediation
+   * attempt and every section turn, and nothing in this codebase trims or
+   * compacts a transcript. The cost of that was measured: `transcript_messages`
+   * climbed 8 → 195 across a single run, 2.2M input tokens and 22.7M cache
+   * reads to produce a four-page paper. The one dip in that curve was the
+   * independent review — the only stage that opened a fresh session — which
+   * reviewed the whole manuscript for 88,608 tokens.
+   *
+   * So each stage gets its own. The contracts are the cross-stage memory, which
+   * is the harness's design intent anyway: a stage that needs to know what an
+   * earlier one decided reads `PAPER.md`, not a transcript of how it was
+   * decided. Section turns within a stage share the stage's session, because
+   * continuity between adjacent sections is the one place a transcript earns
+   * its keep.
+   *
+   * The run's own session is reused for the first stage and for gates, so an
+   * attached TUI still has a coherent conversation to show.
+   */
+  private async sessionForStage(stage: Stage): Promise<string> {
+    const existing = this.stageSessions.get(stage.id);
+    if (existing) return existing;
+
+    if (this.stageSessions.size === 0) {
+      this.stageSessions.set(stage.id, this.opts.sessionId);
+      return this.opts.sessionId;
+    }
+
+    try {
+      const sessionId = await createSession(this.opts.client, {
+        title: `paper-run ${stage.name}`,
+        directory: this.opts.projectDir,
+      });
+      this.stageSessions.set(stage.id, sessionId);
+      return sessionId;
+    } catch (error) {
+      // A session the server will not create is not worth failing a stage over;
+      // fall back to the run session and pay the context.
+      log.warn(`Could not open a session for ${stage.name}: ${describeError(error)}`);
+      this.stageSessions.set(stage.id, this.opts.sessionId);
+      return this.opts.sessionId;
     }
   }
 
