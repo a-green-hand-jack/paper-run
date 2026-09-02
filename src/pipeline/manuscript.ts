@@ -83,7 +83,7 @@ export function inspectManuscriptSources(projectDir: string): ManuscriptStats {
     const body = read(path);
 
     const prose = proseOnly(body);
-    if (isPlaceholder(body, prose)) placeholderSections.push(stem);
+    if (isPlaceholder(body, prose, stem)) placeholderSections.push(stem);
     words += countWords(prose);
     const keys = citationKeys(body);
     if (keys.length > 0) filesWithCitations += 1;
@@ -191,7 +191,17 @@ export function wordTarget(pages: number): { min: number; max: number } {
  * `% TODO(paper-run):` markers never reach here — `proseOnly` strips comments,
  * so a file of real prose carrying one still reads as prose.
  */
-function isPlaceholder(body: string, prose: string): boolean {
+function isPlaceholder(body: string, prose: string, stem: string): boolean {
+  // `check-structure.py` requires `main.tex` to input `10_appendix`, so the
+  // appendix slot exists whether or not the paper has one. Demanding prose
+  // there would deadlock a paper with no appendix against a structural rule it
+  // cannot satisfy -- the same shape as the supplied-bibliography deadlock.
+  //
+  // An empty appendix is legitimate. An appendix printing the word TODO into
+  // the PDF is not, and that is what shipped last time. So the anchor is held
+  // to a weaker rule: say nothing, or say something real.
+  if (/^1\d_/.test(stem)) return hasVisiblePlaceholder(prose);
+
   // `proseOnly` drops the command but keeps its argument, so a file holding
   // only `\section{Conclusion}` arrives here as the word "Conclusion". A
   // heading is not prose: subtract the titles the body declares.
@@ -215,6 +225,21 @@ function isPlaceholder(body: string, prose: string): boolean {
   return remaining.every((word) =>
     /^(todo|tbd|fixme|placeholder|lorem|ipsum|xxx|na)$/i.test(word),
   );
+}
+
+/**
+ * Placeholder text that would render into the PDF.
+ *
+ * `% TODO(paper-run):` markers are comments and `proseOnly` has already
+ * removed them; what reaches here is body text a reader would see.
+ */
+function hasVisiblePlaceholder(prose: string): boolean {
+  const words = prose
+    .replace(/\\[a-zA-Z@]+\*?(\[[^\]]*\])?(\{[^{}]*\})?/g, " ")
+    .split(/[^A-Za-z]+/)
+    .filter((word) => word.length > 0);
+
+  return words.some((word) => /^(todo|tbd|fixme|placeholder|lorem|ipsum)$/i.test(word));
 }
 
 function read(path: string): string {

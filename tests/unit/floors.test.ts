@@ -369,3 +369,53 @@ describe("section substance", () => {
     expect(result.passed).toBe(false);
   });
 });
+
+describe("the appendix anchor is structural, not a content promise", () => {
+  const validator: Validator = {
+    type: "section_substance",
+    required: true,
+    message: "The manuscript inputs a section that says nothing",
+  };
+
+  it("accepts an empty appendix, because check-structure.py forces the input", async () => {
+    // `check-structure.py` requires main.tex to input sections/10_appendix.
+    // Demanding prose there would deadlock a paper with no appendix against a
+    // structural rule it cannot satisfy.
+    section("02_intro", "Pruning is a deployment transformation with security consequences.\n");
+    section("10_appendix", "");
+    main(["02_intro", "10_appendix"]);
+
+    const result = await validateStage(stageWith(validator), tmpDir);
+    expect(result.passed).toBe(true);
+  });
+
+  it("accepts an appendix holding only a comment", async () => {
+    section("02_intro", "Real prose about pruning.\n");
+    section("10_appendix", "% No appendix material for this submission.\n");
+    main(["02_intro", "10_appendix"]);
+
+    const result = await validateStage(stageWith(validator), tmpDir);
+    expect(result.passed).toBe(true);
+  });
+
+  it("still rejects an appendix that prints TODO into the PDF", async () => {
+    // This is what shipped last time: \section{Appendix} followed by the bare
+    // word TODO, rendered into the paper.
+    section("02_intro", "Real prose about pruning.\n");
+    section("10_appendix", "\\section{Appendix}\nTODO\n");
+    main(["02_intro", "10_appendix"]);
+
+    const result = await validateStage(stageWith(validator), tmpDir);
+    expect(result.passed).toBe(false);
+    expect(result.checks[0]!.message).toContain("10_appendix");
+  });
+
+  it("accepts an appendix with real content", async () => {
+    section("02_intro", "Real prose about pruning.\n");
+    section("10_appendix", "\\section{Appendix}\nFull hyperparameters for every pruning configuration.\n");
+    main(["02_intro", "10_appendix"]);
+
+    const result = await validateStage(stageWith(validator), tmpDir);
+    expect(result.passed).toBe(true);
+  });
+});

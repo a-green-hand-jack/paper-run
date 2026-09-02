@@ -83,6 +83,10 @@ export type Validator =
    * whose only body was the word TODO. That is worth catching, and it is not
    * worth a review half to catch: a placeholder is mechanically recognisable,
    * so the check belongs where the writing happens.
+   *
+   * Body sections must say something. The appendix anchor, which
+   * `check-structure.py` forces `main.tex` to input whether or not the paper
+   * has an appendix, only has to avoid printing TODO into the PDF.
    */
   | { type: "section_substance"; required: boolean; message: string }
   /**
