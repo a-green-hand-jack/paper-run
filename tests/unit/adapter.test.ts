@@ -245,7 +245,7 @@ describe("ensureGitignore", () => {
   it("is a no-op only when every ignore line is already present", () => {
     // Both runtime paths must be covered before this is a no-op; a file that
     // has only the older session line still needs run.log appended.
-    const complete = `${SESSION_IGNORE_LINE}\n${PAPER_RUN_DIR}/run.log\n${PAPER_RUN_DIR}/${STATE_FILES.performance}\n${PAPER_RUN_DIR}/${STATE_FILES.publication}\n`;
+    const complete = `${SESSION_IGNORE_LINE}\n${PAPER_RUN_DIR}/run.log\n${PAPER_RUN_DIR}/${STATE_FILES.performance}\n${PAPER_RUN_DIR}/${STATE_FILES.publication}\n${PAPER_RUN_DIR}/build/\n`;
     writeFileSync(join(tmpDir, ".gitignore"), complete);
 
     expect(ensureGitignore(tmpDir)).toBe(false);

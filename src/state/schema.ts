@@ -247,6 +247,17 @@ const PublicationVariantSchema = z.object({
   started_at: z.string().datetime().optional(),
   completed_at: z.string().datetime().optional(),
   error: z.string().optional(),
+  /**
+   * A build that succeeded but not cleanly.
+   *
+   * The one case that produces this today: a task-supplied, read-only
+   * bibliography with malformed entries. BibTeX reports them and still emits a
+   * usable `.bbl`, so the document compiles — but `latexmk -halt-on-error`
+   * refuses to continue, and the agent may not repair the file. Recording the
+   * complaint keeps it visible without failing a build whose only defect is in
+   * an input nobody is allowed to touch.
+   */
+  warning: z.string().optional(),
   stdout: z.string().optional(),
   stderr: z.string().optional(),
   output_digest: z.string().regex(/^sha256:[0-9a-f]{64}$/).optional(),

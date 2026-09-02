@@ -95,6 +95,17 @@ export type Validator =
   | { type: "apparatus_cited"; required: boolean; message: string }
   /** The manuscript is within reach of the venue's page budget. */
   | { type: "manuscript_length"; required: boolean; message: string }
+  /**
+   * The canonical manuscript compiles, and its real page count is recorded.
+   *
+   * Nothing built the document before `publication_build`, the last stage, so
+   * everything upstream reasoned about length through a words-per-page
+   * constant and learned about a broken document at the very end. A build
+   * costs seconds and no tokens; run it where the writing happens. Order
+   * matters — place this before `manuscript_length`, which prefers a measured
+   * page count over its estimate.
+   */
+  | { type: "manuscript_compiles"; timeoutMs?: number; required: boolean; message: string }
   /** Supplied inputs are byte-identical to what the run started with. */
   | { type: "inputs_unmodified"; required: boolean; message: string }
   /** The reviewer left machine-readable findings, not only a prose report. */
@@ -387,6 +398,14 @@ export const STAGES: Record<StageId, Stage> = {
         required: true,
         message: "Supplied figures are missing from the manuscript",
       },
+      // Before the length check, so length can be measured rather than
+      // estimated -- and so a manuscript that does not compile is caught by
+      // the stage that wrote it rather than eight stages later.
+      {
+        type: "manuscript_compiles",
+        required: true,
+        message: "The manuscript does not compile",
+      },
       // Only checked when a human actually stated a budget; silent otherwise.
       {
         type: "manuscript_length",
@@ -653,6 +672,11 @@ export const STAGES: Record<StageId, Stage> = {
         type: "figure_coverage",
         required: true,
         message: "Supplied figures are missing from the revised manuscript",
+      },
+      {
+        type: "manuscript_compiles",
+        required: true,
+        message: "The manuscript does not compile",
       },
       {
         type: "manuscript_length",

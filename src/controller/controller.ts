@@ -1025,7 +1025,10 @@ export class PipelineController {
     stage: Stage,
     publicationBaseline?: PublicationBaseline,
   ): Promise<ValidationResult> {
-    const options = { publicationBaseline };
+    const options = {
+      publicationBaseline,
+      ...(this.opts.signal ? { signal: this.opts.signal } : {}),
+    };
     if (stage.id !== "publication_build") {
       return validateStage(stage, this.opts.projectDir, options);
     }

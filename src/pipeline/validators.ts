@@ -39,6 +39,12 @@ import {
   graphicIsPlaced,
 } from "./manuscript.js";
 import { readInputBaseline } from "../state/store.js";
+import {
+  compileDraft,
+  suppliedBibliographyComplaint,
+  lastMeasuredPages,
+  recordMeasuredPages,
+} from "./compile.js";
 
 import type { Stage, Validator } from "./stages.js";
 
@@ -66,6 +72,13 @@ export interface PublicationBuildResult {
 
 export interface ValidationOptions {
   publicationBaseline?: PublicationBaseline;
+  /**
+   * Cancellation for the checks that shell out.
+   *
+   * `manuscript_compiles` runs a real LaTeX build. Without a signal, a run the
+   * human interrupted still waits for the toolchain to finish.
+   */
+  signal?: AbortSignal;
 }
 
 /** Run every validator for a stage. */
@@ -333,6 +346,26 @@ async function runValidator(
         // No stated budget is "no check", not a failing check.
         return { name: "manuscript-length", passed: true, required: false };
       }
+
+      // Pages are the budget the venue actually states. Words were only ever
+      // a stand-in for a number nothing in the pipeline could measure, and a
+      // stand-in accurate to a words-per-page constant: the run that produced
+      // 3,247 words against a 3,465-word floor was already at ten pages.
+      // `manuscript_compiles` leaves a page count behind when it runs.
+      const measured = lastMeasuredPages(projectDir);
+      if (measured !== null) {
+        const floor = Math.max(1, Math.ceil(0.8 * pages));
+        return {
+          name: "manuscript-length",
+          passed: measured >= floor,
+          required: validator.required,
+          message:
+            measured >= floor
+              ? undefined
+              : `${validator.message}: the manuscript compiles to ${measured} page(s) against a ${pages}-page budget (expected at least ${floor})`,
+        };
+      }
+
       const stats = inspectManuscriptSources(projectDir);
       const band = wordTarget(pages);
       const passed = stats.words >= band.min;
@@ -344,6 +377,54 @@ async function runValidator(
         message: passed
           ? undefined
           : `${validator.message}: ${stats.words} words of prose against a ${pages}-page budget (expected at least ${band.min})`,
+      };
+    }
+
+    case "manuscript_compiles": {
+      // A run that is already stopping should not wait on a LaTeX build.
+      if (options.signal?.aborted) {
+        return {
+          name: "manuscript-compiles",
+          passed: true,
+          required: validator.required,
+          message: "run canceled; the manuscript was not compiled",
+        };
+      }
+
+      const result = await compileDraft(projectDir, {
+        timeoutMs: validator.timeoutMs ?? 4 * 60_000,
+        ...(options.signal ? { signal: options.signal } : {}),
+      });
+
+      // A machine with no LaTeX toolchain is not a manuscript defect. The
+      // check reports it and stands aside; `publication_build` is where a
+      // missing toolchain is a real problem.
+      if (!result.ok && result.diagnostic === "latexmk is unavailable") {
+        return {
+          name: "manuscript-compiles",
+          passed: true,
+          required: validator.required,
+          message: "latexmk is unavailable; the manuscript was not compiled",
+        };
+      }
+
+      if (result.ok) {
+        recordMeasuredPages(projectDir, result.pages);
+        const detail = result.pages === null ? "" : ` (${result.pages} pages)`;
+        return {
+          name: "manuscript-compiles",
+          passed: true,
+          required: validator.required,
+          ...(result.warning ? { message: `built despite ${result.warning}${detail}` } : {}),
+        };
+      }
+
+      recordMeasuredPages(projectDir, null);
+      return {
+        name: "manuscript-compiles",
+        passed: false,
+        required: validator.required,
+        message: `${validator.message}: ${result.diagnostic}`,
       };
     }
 
@@ -900,31 +981,67 @@ export async function buildPublicationArtifacts(
       const outputDirectoryArg = relative(sourceRoot, outputDirectory) || ".";
       const remaining = deadline - Date.now();
       if (remaining <= 0) throw Object.assign(new Error("build deadline exceeded"), { timedOut: true });
-      await execa("latexmk", [
-        "-norc",
-        "-no-shell-escape",
-        "-g",
-        "-pdf",
-        `-jobname=${basename(build.output, ".pdf")}`,
-        `-outdir=${outputDirectoryArg}`,
-        "-interaction=nonstopmode",
-        "-halt-on-error",
-        entrypoint,
-      ], {
-        cwd: sourceRoot,
-        timeout: remaining,
-        ...(options.signal ? { cancelSignal: options.signal } : {}),
-        env: {
-          ...process.env,
-          openin_any: "p",
-          openout_any: "p",
-          shell_escape: "f",
-        },
-      });
+
+      const run = (tolerant: boolean) =>
+        execa("latexmk", [
+          "-norc",
+          "-no-shell-escape",
+          "-g",
+          "-pdf",
+          `-jobname=${basename(build.output, ".pdf")}`,
+          `-outdir=${outputDirectoryArg}`,
+          "-interaction=nonstopmode",
+          // `-f` keeps going past a rule that failed; without `-halt-on-error`
+          // a bad bibliography no longer aborts the document.
+          ...(tolerant ? ["-f"] : ["-halt-on-error"]),
+          entrypoint,
+        ], {
+          cwd: sourceRoot,
+          timeout: deadline - Date.now(),
+          ...(options.signal ? { cancelSignal: options.signal } : {}),
+          env: {
+            ...process.env,
+            openin_any: "p",
+            openout_any: "p",
+            shell_escape: "f",
+          },
+        });
+
+      let warning: string | undefined;
+      try {
+        await run(false);
+      } catch (err) {
+        // A task may supply a read-only bibliography with malformed entries.
+        // BibTeX reports them and still writes a usable `.bbl`; `latexmk
+        // -halt-on-error` then refuses to produce a PDF, and the agent cannot
+        // repair the file because `inputs_unmodified` forbids it. That is a
+        // deadlock built out of two correct rules, and it blocked pwb-0011
+        // after all eight writing stages had passed. Retry tolerantly and let
+        // the artifact decide: a PDF that exists and has PDF structure is a
+        // build, whatever BibTeX thought of an input nobody may touch.
+        const complaint = suppliedBibliographyComplaint(root, err);
+        if (complaint === null) throw err;
+
+        // `latexmk -f` still exits non-zero when a rule failed, even after it
+        // has produced the PDF. The artifact is the verdict here, not the exit
+        // code — but a timeout or a cancellation is still a real failure.
+        try {
+          await run(true);
+        } catch (retryErr) {
+          const failed = retryErr as { timedOut?: boolean; isCanceled?: boolean };
+          if (failed.timedOut || failed.isCanceled || options.signal?.aborted) throw retryErr;
+        }
+        const produced = inspectRegularFile(root, build.output);
+        if (!produced || !hasBasicPdfStructure(join(root, build.output), produced.size)) throw err;
+        warning = complaint;
+        log.warn(`[${build.name}] built despite ${complaint}`);
+      }
+
       updatePublicationVariant(projectDir, publication, build.name, {
         status: "completed",
         completed_at: new Date().toISOString(),
         error: undefined,
+        ...(warning ? { warning } : { warning: undefined }),
         output_digest: `sha256:${digestFile(join(root, build.output))}`,
       });
     } catch (err) {

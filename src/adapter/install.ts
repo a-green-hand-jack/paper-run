@@ -78,6 +78,10 @@ const IGNORE_LINES = [
   `${PAPER_RUN_DIR}/run.log`,
   `${PAPER_RUN_DIR}/${STATE_FILES.performance}`,
   `${PAPER_RUN_DIR}/${STATE_FILES.publication}`,
+  // Draft-time builds are measurements, not artifacts: a PDF and its aux
+  // files per drafting attempt, which would otherwise land in every
+  // checkpoint as binary churn.
+  `${PAPER_RUN_DIR}/build/`,
 ];
 
 // ---------------------------------------------------------------------------
