@@ -65,17 +65,14 @@ The harness assigns each task a single owner skill. Follow it:
 
 ## The pipeline
 
-The thirteen stages, in order:
+paper-run tells you which stage you are in and advances the pointer itself. You
+never choose the next one, and you never work on a stage other than the current
+one.
 
-`bootstrap` → `material_assessment` → `evidence_inventory` → `paper_positioning`
-→ `claim_evidence` → `story_outline` → `canonical_drafting` →
-`citation_integration` → `self_review` → `independent_review` → `revision` →
-`publication_build` → `paper_candidate`
-
-Each stage has expected outputs defined by its owner skill. A stage is done when
-those outputs exist and the harness validators for that stage pass. Do not run
-`git add`, `git commit`, or `git push`; the paper-run controller owns staging,
-checkpoint commits, and publication tags. The controller also advances the stage pointer.
+Each stage's expected outputs are defined by its owner skill and restated in the
+prompt. A stage is done when those outputs exist and the harness validators for
+that stage pass. Do not run `git add`, `git commit`, or `git push`; the
+controller owns staging, checkpoint commits, and publication tags.
 
 Headless stages must stay within the installed tool permissions. Prefer the
 `read`, `glob`, and `grep` tools. The controller owns validator and build

@@ -21,6 +21,7 @@ import {
   DEFAULT_MODEL,
 } from "../../src/adapter/install.js";
 import { OPENCODE_DIR, OPENCODE_CONFIG, PAPER_RUN_DIR, STATE_FILES } from "../../src/utils/constants.js";
+import { PIPELINE_STAGES } from "../../src/state/gate-presets.js";
 
 /** Every file the adapter must put into a writing repo, project-relative. */
 const EXPECTED_FILES = [
@@ -327,6 +328,18 @@ describe("isAdapterInstalled", () => {
     expect(reviewer).not.toContain("make pdf");
   });
 
+  it("substitutes the pipeline stage list into the state tool", async () => {
+    await installAdapter(tmpDir);
+    const tool = readFileSync(join(tmpDir, OPENCODE_DIR, "tools", "paper-run-state.ts"), "utf-8");
+
+    // The tool reports pipeline position to the model, so its list has to be
+    // the controller's list -- not a copy that drifts.
+    const match = tool.match(/const PIPELINE_STAGES: string\[\] = (\[[\s\S]*?\])/);
+    expect(match).toBeTruthy();
+    expect(JSON.parse(match![1]!)).toEqual([...PIPELINE_STAGES]);
+    expect(tool).not.toContain("{{PIPELINE_STAGES}}");
+  });
+
   it("protects controller and harness files while allowing the assessment artifact", async () => {
     await installAdapter(tmpDir);
     const writer = readFileSync(join(tmpDir, OPENCODE_DIR, "agent", "paper-writer.md"), "utf-8");
@@ -349,7 +362,7 @@ describe("isAdapterInstalled", () => {
     expect(writerFrontmatter).not.toContain("webfetch: allow");
     expect(writerFrontmatter).toContain("webfetch: deny");
     expect(writerFrontmatter).toContain("websearch: deny");
-    expect(writer).toContain("Do not run\n`git add`, `git commit`, or `git push`");
+    expect(writer).toContain("Do not run `git add`, `git commit`, or `git push`");
 
     const parsedConfig = JSON.parse(config);
     expect(parsedConfig.permission.webfetch).toBe("ask");

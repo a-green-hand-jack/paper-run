@@ -167,22 +167,28 @@ paper-run mode autonomous
 
 ## Pipeline
 
-Every run follows the same validated 13-stage sequence:
+Every run follows the same validated sequence:
 
 ```text
-bootstrap -> material assessment -> evidence inventory -> paper positioning
--> claim-evidence organization -> story and outline -> canonical drafting
--> citation, figure and table integration -> self review -> independent review
+bootstrap -> material assessment -> paper plan -> full draft
+-> evidence reconciliation -> self review -> independent review
 -> revision -> publication variant build -> paper candidate
 ```
+
+The shape is draft-first. Planning is one turn that fixes the paper's identity,
+its argument, and the section responsibilities table that becomes the
+manuscript's outline. Drafting then writes every section that table names —
+creating a section the venue needs even when the template ships no file for it,
+and leaving out template sections this paper does not want. Everything after
+drafting works on text that exists.
 
 Claim-evidence qualification belongs in `EXPERIMENTS.md ## Claim-evidence bindings`;
 locked thesis and contribution sections remain fail-closed. The final candidate is a reviewable
 artifact, not an assertion that a Human has approved submission or an external release.
 
-Canonical drafting runs one turn per file in `paper/sections/`, which is the granularity the
-harness's `section-writing` skill is written for. The stage's time budget is divided across those
-sections rather than multiplied; a repository without that layout falls back to a single turn.
+Drafting runs one turn per section the plan named, which is the granularity the harness's
+`section-writing` skill is written for. The stage's time budget is divided across those sections
+rather than multiplied.
 
 ## Writing guidance
 

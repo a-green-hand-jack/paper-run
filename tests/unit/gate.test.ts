@@ -33,7 +33,7 @@ function makeRunState(overrides: Partial<RunState> = {}): RunState {
     run_id: "abcd1234",
     run_branch: "paper-run/abcd1234",
     mode: "collaborative",
-    current_stage: "paper_positioning",
+    current_stage: "paper_plan",
     stage_status: "running",
     started_at: "2026-08-29T10:00:00.000Z",
     updated_at: "2026-08-29T10:00:00.000Z",
@@ -46,7 +46,7 @@ function ok<T>(data: T) {
   return Promise.resolve({ data, error: undefined });
 }
 
-function resolved(policy: GatePolicy, stageId = "paper_positioning") {
+function resolved(policy: GatePolicy, stageId = "paper_plan") {
   return { policy, action: gateActionFor(policy, stageId) };
 }
 
@@ -112,8 +112,8 @@ afterEach(() => {
 describe("gateActionFor", () => {
   it("reads the configured action", () => {
     const policy = generateGatePreset("collaborative");
-    expect(gateActionFor(policy, "paper_positioning")).toBe("await_human");
-    expect(gateActionFor(policy, "evidence_inventory")).toBe("auto");
+    expect(gateActionFor(policy, "paper_plan")).toBe("await_human");
+    expect(gateActionFor(policy, "self_review")).toBe("auto");
   });
 
   it("defaults an unknown stage to await_human, not auto", () => {
@@ -159,7 +159,7 @@ describe("evaluateGate with an auto policy", () => {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
-      stageId: "paper_positioning",
+      stageId: "paper_plan",
     });
 
     expect(decision.outcome).toBe("proceed");
@@ -170,13 +170,13 @@ describe("evaluateGate with an auto policy", () => {
   it("proceeds for a skipped stage", async () => {
     const client = mockClient();
     const policy = generateGatePreset("autonomous");
-    policy.gates["paper_positioning"] = { policy: "skip" };
+    policy.gates["paper_plan"] = { policy: "skip" };
 
     const decision = await evaluateGate(resolved(policy), {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
-      stageId: "paper_positioning",
+      stageId: "paper_plan",
     });
 
     expect(decision.outcome).toBe("proceed");
@@ -202,13 +202,13 @@ describe("evaluateGate awaiting a human", () => {
     ]);
     const policy = generateGatePreset("collaborative");
     const boundary = resolved(policy);
-    policy.gates.paper_positioning = { policy: "auto" };
+    policy.gates.paper_plan = { policy: "auto" };
 
     const decision = await evaluateGate(boundary, {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
-      stageId: "paper_positioning",
+      stageId: "paper_plan",
       pollIntervalMs: 50,
     });
 
@@ -230,7 +230,7 @@ describe("evaluateGate awaiting a human", () => {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
-      stageId: "paper_positioning",
+      stageId: "paper_plan",
       pollIntervalMs: 50,
     });
 
@@ -261,7 +261,7 @@ describe("evaluateGate awaiting a human", () => {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
-      stageId: "paper_positioning",
+      stageId: "paper_plan",
       pollIntervalMs: 50,
     });
 
@@ -283,7 +283,7 @@ describe("evaluateGate awaiting a human", () => {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
-      stageId: "paper_positioning",
+      stageId: "paper_plan",
       pollIntervalMs: 50,
     });
 
@@ -300,7 +300,7 @@ describe("evaluateGate awaiting a human", () => {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
-      stageId: "paper_positioning",
+      stageId: "paper_plan",
       pollIntervalMs: 50,
     });
 
@@ -326,7 +326,7 @@ describe("evaluateGate awaiting a human", () => {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
-      stageId: "paper_positioning",
+      stageId: "paper_plan",
       pollIntervalMs: 20,
     });
 
@@ -346,7 +346,7 @@ describe("evaluateGate awaiting a human", () => {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
-      stageId: "paper_positioning",
+      stageId: "paper_plan",
       pollIntervalMs: 50,
     });
 
@@ -371,7 +371,7 @@ describe("evaluateGate released by /approve", () => {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
-      stageId: "paper_positioning",
+      stageId: "paper_plan",
       pollIntervalMs: 20,
     });
 
@@ -391,7 +391,7 @@ describe("evaluateGate released by /approve", () => {
       writeRunState(tmpDir, {
         ...state,
         stage_status: "blocked",
-        error: { stage: "paper_positioning", message: "rejected by human", at: new Date().toISOString() },
+        error: { stage: "paper_plan", message: "rejected by human", at: new Date().toISOString() },
       });
     }, 60);
 
@@ -399,7 +399,7 @@ describe("evaluateGate released by /approve", () => {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
-      stageId: "paper_positioning",
+      stageId: "paper_plan",
       pollIntervalMs: 20,
     });
 
@@ -427,7 +427,7 @@ describe("evaluateGate released by /approve", () => {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
-      stageId: "paper_positioning",
+      stageId: "paper_plan",
       pollIntervalMs: 20,
     });
 
@@ -456,7 +456,7 @@ describe("evaluateGate released by /approve", () => {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
-      stageId: "paper_positioning",
+      stageId: "paper_plan",
       pollIntervalMs: 20,
     });
 
@@ -478,7 +478,7 @@ describe("evaluateGate abort", () => {
       client,
       sessionId: "ses_1",
       projectDir: tmpDir,
-      stageId: "paper_positioning",
+      stageId: "paper_plan",
       pollIntervalMs: 20,
       signal: controller.signal,
     });
@@ -501,7 +501,7 @@ describe("switchOperatingMode", () => {
 
     const next = readGatePolicy(tmpDir);
     expect(next.mode).toBe("autonomous");
-    expect(next.gates["paper_positioning"]?.policy).toBe("auto");
+    expect(next.gates["paper_plan"]?.policy).toBe("auto");
     expect(readRunState(tmpDir).mode).toBe("autonomous");
     expect(readFileSync(join(tmpDir, "PAPER.md"), "utf-8")).toContain("Mode: autonomous");
   });
@@ -509,13 +509,13 @@ describe("switchOperatingMode", () => {
   it("preserves a per-gate override across the switch", () => {
     const policy = generateGatePreset("collaborative");
     // Not the collaborative default for this stage, so it is a user override.
-    policy.gates["evidence_inventory"] = { policy: "await_human" };
+    policy.gates["self_review"] = { policy: "await_human" };
     writeGatePolicy(tmpDir, policy);
 
     switchOperatingMode(tmpDir, "autonomous");
 
     const next = readGatePolicy(tmpDir);
-    expect(next.gates["evidence_inventory"]?.policy).toBe("await_human");
-    expect(next.gates["paper_positioning"]?.policy).toBe("auto");
+    expect(next.gates["self_review"]?.policy).toBe("await_human");
+    expect(next.gates["paper_plan"]?.policy).toBe("auto");
   });
 });

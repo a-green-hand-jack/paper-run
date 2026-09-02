@@ -122,12 +122,12 @@ describe("prepareRunResume", () => {
 
   it("restores an earlier gate_waiting HEAD over later mutable state and history", async () => {
     const sha = await checkpoint("bootstrap", "gate_waiting");
-    writeRunState(repo, state({ current_stage: "evidence_inventory", stage_status: "completed" }));
+    writeRunState(repo, state({ current_stage: "self_review", stage_status: "completed" }));
     writeStageHistory(repo, {
       schema_version: "paper-run-stage-history-v1",
       stages: [
         {
-          stage_id: "evidence_inventory",
+          stage_id: "self_review",
           status: "completed",
           started_at: "2026-08-30T10:01:00.000Z",
           completed_at: "2026-08-30T10:02:00.000Z",
@@ -210,7 +210,7 @@ describe("prepareRunResume", () => {
     "reruns a %s checkpoint at that exact stage",
     async (status) => {
       await checkpoint("material_assessment", status);
-      writeRunState(repo, state({ current_stage: "evidence_inventory", stage_status: "completed" }));
+      writeRunState(repo, state({ current_stage: "self_review", stage_status: "completed" }));
 
       await expect(prepareRunResume(repo)).resolves.toMatchObject({
         current_stage: "material_assessment",
@@ -230,7 +230,7 @@ describe("prepareRunResume", () => {
       templateVersion: "v0.3.0",
       materialHash: "sha256:abc",
     }, repo);
-    writeRunState(repo, state({ current_stage: "paper_positioning", session_id: "mutable" }));
+    writeRunState(repo, state({ current_stage: "paper_plan", session_id: "mutable" }));
 
     await expect(prepareRunResume(repo)).resolves.toMatchObject({
       current_stage: "material_assessment",
@@ -255,7 +255,7 @@ describe("prepareRunResume", () => {
         kind: "manual",
         stageAll: false,
       }, repo);
-      writeRunState(repo, state({ current_stage: "evidence_inventory", stage_status: "completed" }));
+      writeRunState(repo, state({ current_stage: "self_review", stage_status: "completed" }));
 
       await expect(prepareRunResume(repo)).resolves.toMatchObject({
         current_stage: "material_assessment",

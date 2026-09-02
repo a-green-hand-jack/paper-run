@@ -6,18 +6,25 @@ import type { GatePolicy } from "./schema.js";
 import type { Mode } from "../utils/constants.js";
 
 /**
- * The 13 pipeline stages, in order.
- * This is the canonical ordering used everywhere.
+ * The pipeline stages, in order. This is the canonical ordering used everywhere.
+ *
+ * The shape is draft-first. An earlier version derived positioning, claim
+ * bindings, and a narrative outline in three separate turns before any prose
+ * existed, then drafted, then wired citations in a fourth. Measured against a
+ * single-pass baseline it produced half the paper for six times the tokens: the
+ * preparatory turns each re-read the whole context to write a contract section,
+ * and the draft that finally arrived inherited their caution rather than their
+ * content.
+ *
+ * So planning is one cheap turn, drafting is the centre of gravity, and
+ * everything after it works on text that exists.
  */
 export const PIPELINE_STAGES = [
   "bootstrap",
   "material_assessment",
-  "evidence_inventory",
-  "paper_positioning",
-  "claim_evidence",
-  "story_outline",
-  "canonical_drafting",
-  "citation_integration",
+  "paper_plan",
+  "full_draft",
+  "evidence_reconciliation",
   "self_review",
   "independent_review",
   "revision",
@@ -78,9 +85,8 @@ export function isRetiredStage(id: string): boolean {
  */
 const COLLABORATIVE_GATES: ReadonlySet<string> = new Set([
   "material_assessment",
-  "paper_positioning",
-  "story_outline",
-  "canonical_drafting",
+  "paper_plan",
+  "full_draft",
   "independent_review",
   "paper_candidate",
 ]);

@@ -97,7 +97,7 @@ describe("GatePolicySchema", () => {
       mode: "collaborative",
       gates: {
         material_assessment: { policy: "await_human" },
-        canonical_drafting: { policy: "auto" },
+        full_draft: { policy: "auto" },
       },
     });
     expect(result.success).toBe(true);
@@ -371,15 +371,15 @@ describe("gate presets", () => {
     const policy = generateGatePreset("collaborative");
     expect(policy.mode).toBe("collaborative");
     expect(policy.gates["material_assessment"]?.policy).toBe("await_human");
-    expect(policy.gates["paper_positioning"]?.policy).toBe("await_human");
-    expect(policy.gates["story_outline"]?.policy).toBe("await_human");
-    expect(policy.gates["canonical_drafting"]?.policy).toBe("await_human");
+    expect(policy.gates["paper_plan"]?.policy).toBe("await_human");
+    expect(policy.gates["paper_plan"]?.policy).toBe("await_human");
+    expect(policy.gates["full_draft"]?.policy).toBe("await_human");
     expect(policy.gates["independent_review"]?.policy).toBe("await_human");
     expect(policy.gates["paper_candidate"]?.policy).toBe("await_human");
     // Others are auto
     expect(policy.gates["bootstrap"]?.policy).toBe("auto");
-    expect(policy.gates["evidence_inventory"]?.policy).toBe("auto");
-    expect(policy.gates["citation_integration"]?.policy).toBe("auto");
+    expect(policy.gates["self_review"]?.policy).toBe("auto");
+    expect(policy.gates["evidence_reconciliation"]?.policy).toBe("auto");
   });
 
   it("covers all 13 pipeline stages", () => {
@@ -392,16 +392,16 @@ describe("gate presets", () => {
 
   it("switchGatePreset preserves user overrides", () => {
     const collab = generateGatePreset("collaborative");
-    // User overrides: set evidence_inventory to await_human (not the default)
-    collab.gates["evidence_inventory"] = { policy: "await_human" };
+    // User overrides: set self_review to await_human (not the default)
+    collab.gates["self_review"] = { policy: "await_human" };
 
     const switched = switchGatePreset(collab, "autonomous");
     expect(switched.mode).toBe("autonomous");
-    // User override preserved (evidence_inventory was non-default, so kept)
-    expect(switched.gates["evidence_inventory"]?.policy).toBe("await_human");
+    // User override preserved (self_review was non-default, so kept)
+    expect(switched.gates["self_review"]?.policy).toBe("await_human");
     // Others reset to autonomous defaults
     expect(switched.gates["material_assessment"]?.policy).toBe("auto");
-    expect(switched.gates["canonical_drafting"]?.policy).toBe("auto");
+    expect(switched.gates["full_draft"]?.policy).toBe("auto");
   });
 
   it("switchGatePreset resets non-overridden gates", () => {
@@ -409,6 +409,6 @@ describe("gate presets", () => {
     const switched = switchGatePreset(auto, "collaborative");
     // All were at autonomous defaults, so all get collaborative defaults
     expect(switched.gates["material_assessment"]?.policy).toBe("await_human");
-    expect(switched.gates["paper_positioning"]?.policy).toBe("await_human");
+    expect(switched.gates["paper_plan"]?.policy).toBe("await_human");
   });
 });

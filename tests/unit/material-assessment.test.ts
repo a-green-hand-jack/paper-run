@@ -439,12 +439,12 @@ describe("the unusable hard stop", () => {
 
   it("blocks every stage that produces manuscript substance", () => {
     for (const stage of [
-      "evidence_inventory",
-      "paper_positioning",
-      "claim_evidence",
-      "story_outline",
-      "canonical_drafting",
-      "citation_integration",
+      "self_review",
+      "paper_plan",
+      "evidence_reconciliation",
+      "paper_plan",
+      "full_draft",
+      "evidence_reconciliation",
       "self_review",
       "independent_review",
       "revision",
@@ -464,7 +464,7 @@ describe("the unusable hard stop", () => {
 
   it("blocks nothing when materials are usable or partial", () => {
     for (const verdict of ["usable", "partial"] as const) {
-      expect(isBlockedByUnusableMaterials("canonical_drafting", verdict), verdict).toBe(false);
+      expect(isBlockedByUnusableMaterials("full_draft", verdict), verdict).toBe(false);
     }
   });
 });

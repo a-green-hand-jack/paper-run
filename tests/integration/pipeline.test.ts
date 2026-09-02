@@ -172,7 +172,7 @@ describe("stage validators against a real harness repo", () => {
     // Empty out the contract a later stage depends on.
     writeFileSync(join(repo, "PAPER.md"), "# Paper\n\n## Paper identity\n\n");
 
-    const result = await validateStage(STAGES.paper_positioning, repo);
+    const result = await validateStage(STAGES.paper_plan, repo);
     expect(result.passed).toBe(false);
     // The message must name what is wrong, since it goes into the
     // remediation prompt the agent has to act on.
@@ -243,8 +243,8 @@ describe("running stages against a real repository", () => {
 
     // No manuscript work was attempted.
     const history = readStageHistory(repo);
-    expect(history.stages.some((s) => s.stage_id === "canonical_drafting")).toBe(false);
-    expect(history.stages.some((s) => s.stage_id === "paper_positioning")).toBe(false);
+    expect(history.stages.some((s) => s.stage_id === "full_draft")).toBe(false);
+    expect(history.stages.some((s) => s.stage_id === "paper_plan")).toBe(false);
 
     // Nothing was written into the manuscript.
     const sections = join(repo, "paper", "sections");
@@ -291,7 +291,7 @@ describe("running stages against a real repository", () => {
       signal: ac.signal,
     });
 
-    abortAfter("evidence_inventory", ac);
+    abortAfter("self_review", ac);
     await controller.run();
 
     const record = readStageHistory(repo).stages.find(

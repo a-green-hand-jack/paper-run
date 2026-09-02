@@ -130,10 +130,10 @@ describe("init against the real template", () => {
     expect(policy.mode).toBe("collaborative");
     // The decision points a human should see.
     expect(policy.gates["material_assessment"]?.policy).toBe("await_human");
-    expect(policy.gates["paper_positioning"]?.policy).toBe("await_human");
-    expect(policy.gates["canonical_drafting"]?.policy).toBe("await_human");
+    expect(policy.gates["paper_plan"]?.policy).toBe("await_human");
+    expect(policy.gates["full_draft"]?.policy).toBe("await_human");
     // And the ones they should not be interrupted for.
-    expect(policy.gates["evidence_inventory"]?.policy).toBe("auto");
+    expect(policy.gates["self_review"]?.policy).toBe("auto");
   });
 
   it("runs the harness's own validators successfully on a fresh repo", async () => {

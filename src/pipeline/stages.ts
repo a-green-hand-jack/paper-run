@@ -186,49 +186,29 @@ export const STAGES: Record<StageId, Stage> = {
     retries: 2,
   },
 
-  evidence_inventory: {
-    id: "evidence_inventory",
-    name: "Evidence inventory",
+  paper_plan: {
+    id: "paper_plan",
+    name: "Paper plan",
     objective:
-      "Record what evidence exists, what each experiment shows, and where the gaps are.",
-    harnessSkill: ".agents/skills/paper-brief-ingest/SKILL.md",
-    sidecarSkills: [".agents/skills/ccf-experiment-designer/SKILL.md"],
-    expectedOutputs: [
-      "EXPERIMENTS.md ## Experiment overview populated from the available materials",
-      "Unavailable or incomplete results marked unresolved rather than guessed",
-    ],
-    validators: [
-      {
-        type: "contract_section",
-        contract: "EXPERIMENTS.md",
-        heading: "## Experiment overview",
-        required: true,
-        message: "EXPERIMENTS.md ## Experiment overview is missing or empty",
-      },
-      {
-        type: "check_script",
-        script: "check-paper-contracts.py",
-        required: true,
-        message: "Paper contracts failed structural validation",
-      },
-    ],
-    timeoutMs: 15 * MINUTES,
-    retries: 2,
-  },
-
-  paper_positioning: {
-    id: "paper_positioning",
-    name: "Paper positioning",
-    objective:
-      "Fix what this paper claims, for whom, and how it differs from what exists.",
+      "Decide what the paper claims, how the argument is staged, and what each section must accomplish.",
     harnessSkill: ".agents/skills/style-alignment/SKILL.md",
-    // The venue map is what turns "a paper" into "a paper for this venue",
-    // which is the first thing the writing engine asks for and the last thing
-    // it can infer on its own.
-    requiredReading: [".agents/knowledge/venues/README.md", ".agents/vendor/ccfa-skills/ccf-paper-writer/references/ccf-a-venue-map.md"],
+    // One turn, not three. Positioning, contribution framing, and the
+    // narrative arc are the same decision seen from different angles, and
+    // splitting them meant re-reading every contract three times to write
+    // three sections of one document.
+    requiredReading: [
+      ".agents/vendor/ccfa-skills/ccf-paper-writer/references/storyline-blueprint.md",
+      ".agents/vendor/ccfa-skills/ccf-paper-writer/references/ccf-a-venue-map.md",
+      ".agents/knowledge/venues/README.md",
+    ],
     expectedOutputs: [
       "PAPER.md ## Paper identity",
       "PAPER.md ## What readers should believe, including central thesis and contributions",
+      "PAPER.md ## Story and structure: the narrative arc, plus a "
+        + "### Section responsibilities row for every section this paper will actually have",
+      "The section responsibilities table is the manuscript's outline — drafting builds "
+        + "exactly the sections it lists, so include one the venue needs even when the "
+        + "template ships no file for it, and leave out template sections this paper does not want",
       "A venue knowledge file under .agents/knowledge/venues/ for the target venue, "
         + "filled from the brief and materials with every unverified field marked UNVERIFIED",
       "Anything genuinely undecided left under ## Unresolved rather than invented",
@@ -249,13 +229,22 @@ export const STAGES: Record<StageId, Stage> = {
         message: "PAPER.md ## What readers should believe is missing or empty",
       },
       {
+        type: "contract_section",
+        contract: "PAPER.md",
+        heading: "## Story and structure",
+        required: true,
+        message:
+          "PAPER.md ## Story and structure is missing or empty — drafting reads its "
+          + "### Section responsibilities table to decide which sections to write",
+      },
+      {
         type: "check_script",
         script: "check-paper-contracts.py",
         required: true,
         message: "Paper contracts failed structural validation",
       },
-      // Advisory: a venue file is worth having but a run whose brief names no
-      // venue should not be blocked from positioning the paper at all.
+      // Advisory: a brief that names no venue should still be able to position
+      // the paper.
       {
         type: "check_script",
         script: "check-venue-knowledge.py",
@@ -263,83 +252,18 @@ export const STAGES: Record<StageId, Stage> = {
         message: "Venue knowledge is missing or incomplete",
       },
     ],
-    timeoutMs: 15 * MINUTES,
+    timeoutMs: 12 * MINUTES,
     retries: 2,
   },
 
-  claim_evidence: {
-    id: "claim_evidence",
-    name: "Claim-evidence organization",
-    objective: "Bind every claim the paper will make to the evidence that supports it.",
-    harnessSkill: ".agents/skills/citation-support-review/SKILL.md",
-    sidecarSkills: [".agents/skills/ccf-integrity-auditor/SKILL.md"],
-    expectedOutputs: [
-      "Each contribution in PAPER.md traced to specific evidence under EXPERIMENTS.md ## Claim-evidence bindings",
-      "Claim-evidence qualification stays in EXPERIMENTS.md; cross-cutting gaps may go under PAPER.md ## Unresolved",
-      "Do not edit the locked PAPER.md ### Central thesis or ### Contributions sections",
-      "Claims without support marked unresolved — never softened into sounding supported",
-    ],
-    validators: [
-      {
-        type: "contract_section",
-        contract: "EXPERIMENTS.md",
-        heading: "## Claim-evidence bindings",
-        required: true,
-        message:
-          "EXPERIMENTS.md ## Claim-evidence bindings is missing or empty — record bindings there without editing locked PAPER.md sections",
-      },
-      {
-        type: "check_script",
-        script: "check-paper-contracts.py",
-        required: true,
-        message: "Paper contracts failed structural validation",
-      },
-    ],
-    timeoutMs: 15 * MINUTES,
-    retries: 2,
-  },
-
-  story_outline: {
-    id: "story_outline",
-    name: "Story and outline",
-    objective: "Decide the narrative arc and what each section is responsible for.",
-    harnessSkill: ".agents/skills/style-alignment/SKILL.md",
-    // 536 lines on how a paper's argument is staged. It is the single densest
-    // piece of craft in the harness and the stage it belongs to is this one.
-    requiredReading: [".agents/vendor/ccfa-skills/ccf-paper-writer/references/storyline-blueprint.md"],
-    expectedOutputs: [
-      "PAPER.md ## Story and structure, including the narrative arc",
-      "Section responsibilities table: what each section must accomplish for the reader",
-    ],
-    validators: [
-      {
-        type: "contract_section",
-        contract: "PAPER.md",
-        heading: "## Story and structure",
-        required: true,
-        message: "PAPER.md ## Story and structure is missing or empty",
-      },
-      {
-        type: "check_script",
-        script: "check-paper-contracts.py",
-        required: true,
-        message: "Paper contracts failed structural validation",
-      },
-    ],
-    timeoutMs: 15 * MINUTES,
-    retries: 2,
-  },
-
-  canonical_drafting: {
-    id: "canonical_drafting",
-    name: "Canonical drafting",
-    objective: "Write the manuscript sections in paper/sections/.",
+  full_draft: {
+    id: "full_draft",
+    name: "Full draft",
+    objective:
+      "Write the complete manuscript — every section the plan calls for, with the citations and figures the materials supply.",
     harnessSkill: ".agents/skills/section-writing/SKILL.md",
-    // ccf-humanization moves here from self review: the vendored writing
-    // engine calls it "the first manuscript-facing preflight", and running a
-    // preflight after the draft exists inverts it. lieflat-less-ai-tone goes
-    // the other way, to self review, because it describes itself as a final
-    // whitelist pass over finished text.
+    // ccf-humanization is the writing engine's own "first manuscript-facing
+    // preflight"; lieflat-less-ai-tone is a final pass and belongs later.
     sidecarSkills: [
       ".agents/skills/ccf-paper-writer/SKILL.md",
       ".agents/skills/ccf-humanization/SKILL.md",
@@ -348,10 +272,14 @@ export const STAGES: Record<StageId, Stage> = {
       ".agents/knowledge/scientific-writing.md",
       ".agents/vendor/ccfa-skills/ccf-paper-writer/references/section-modules.md",
       ".agents/vendor/ccfa-skills/ccf-paper-writer/references/prose-quality-guardrails.md",
+      ".agents/vendor/ccfa-skills/ccf-paper-writer/references/length-budget-policy.md",
     ],
     perSection: true,
     expectedOutputs: [
-      "Draft prose in paper/sections/*.tex following the agreed outline",
+      "Draft prose for every section named in PAPER.md ### Section responsibilities",
+      "A complete manuscript, not a skeleton: use the venue's page budget rather than stopping early",
+      "Citations placed from the bibliography the repository already contains, using keys that exist in it",
+      "Every supplied figure and table either placed in the manuscript or recorded under PAPER.md ## Unresolved with a reason",
       "Every unsupported statement carried as an explicit % TODO(paper-run): marker",
       "No invented numbers, results, or citations under any circumstance",
     ],
@@ -370,37 +298,58 @@ export const STAGES: Record<StageId, Stage> = {
         required: true,
         message: "Paper interface macros are missing or inconsistent",
       },
-      // Advisory on purpose: these are mechanical tells, not a judgement about
-      // the argument. A finding means re-read the passage, not rewrite to
-      // satisfy a counter.
+      // Advisory: mechanical tells, not a verdict on the argument.
       {
         type: "prose_quality",
         required: false,
         message: "Draft prose shows mechanical writing patterns",
       },
     ],
-    // Drafting remains the longest stage in the pipeline. With perSection set
-    // the controller divides this budget across the sections it finds.
-    timeoutMs: 45 * MINUTES,
+    // The longest stage in the pipeline. With perSection set the controller
+    // divides this budget across the sections the plan named.
+    timeoutMs: 50 * MINUTES,
     retries: 2,
   },
 
-  citation_integration: {
-    id: "citation_integration",
-    name: "Citation, figure and table integration",
-    objective: "Wire references, figures and tables into the draft and make them check out.",
-    harnessSkill: ".agents/skills/reference-repair/SKILL.md",
-    sidecarSkills: [
-      ".agents/skills/citation-support-review/SKILL.md",
-      ".agents/skills/ccf-visual-composer/SKILL.md",
-    ],
+  evidence_reconciliation: {
+    id: "evidence_reconciliation",
+    name: "Evidence reconciliation",
+    objective:
+      "Bind every claim the draft makes to the evidence behind it, and record what nothing supports.",
+    // Deliberately after drafting. Inventorying evidence before any prose
+    // existed produced a contract nobody wrote against; doing it now means
+    // every binding is checked against a sentence that is actually in the paper.
+    harnessSkill: ".agents/skills/citation-support-review/SKILL.md",
+    sidecarSkills: [".agents/skills/ccf-integrity-auditor/SKILL.md"],
     requiredReading: [".agents/vendor/ccfa-skills/ccf-paper-writer/references/citation-workflow.md"],
     expectedOutputs: [
-      "Citations resolved in paper/refs.bib with the reference ledger updated",
-      "Figures and tables referenced from the text actually present",
-      "Any citation that cannot be verified recorded as unresolved, not invented",
+      "EXPERIMENTS.md ## Experiment overview populated from the available materials",
+      "EXPERIMENTS.md ## Claim-evidence bindings tracing each contribution to specific evidence",
+      "Claims the materials cannot support marked unresolved — never softened into sounding supported",
+      "Do not edit the locked PAPER.md ### Central thesis or ### Contributions sections",
     ],
     validators: [
+      {
+        type: "contract_section",
+        contract: "EXPERIMENTS.md",
+        heading: "## Experiment overview",
+        required: true,
+        message: "EXPERIMENTS.md ## Experiment overview is missing or empty",
+      },
+      {
+        type: "contract_section",
+        contract: "EXPERIMENTS.md",
+        heading: "## Claim-evidence bindings",
+        required: true,
+        message:
+          "EXPERIMENTS.md ## Claim-evidence bindings is missing or empty — record bindings there without editing locked PAPER.md sections",
+      },
+      {
+        type: "check_script",
+        script: "check-paper-contracts.py",
+        required: true,
+        message: "Paper contracts failed structural validation",
+      },
       {
         type: "check_script",
         script: "check-reference-integrity.py",
@@ -417,6 +366,7 @@ export const STAGES: Record<StageId, Stage> = {
     timeoutMs: 20 * MINUTES,
     retries: 2,
   },
+
 
   self_review: {
     id: "self_review",

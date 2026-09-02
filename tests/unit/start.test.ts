@@ -14,6 +14,8 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { execaSync } from "execa";
 
+import { PIPELINE_STAGES } from "../../src/state/gate-presets.js";
+
 import {
   statusCommand,
   modeCommand,
@@ -41,7 +43,7 @@ function makeRunState(overrides: Partial<RunState> = {}): RunState {
     run_id: "abcd1234",
     run_branch: "paper-run/abcd1234",
     mode: "collaborative",
-    current_stage: "paper_positioning",
+    current_stage: "paper_plan",
     stage_status: "running",
     started_at: "2026-08-29T10:00:00.000Z",
     updated_at: "2026-08-29T10:00:00.000Z",
@@ -105,9 +107,9 @@ describe("statusCommand", () => {
     const parsed = JSON.parse(chunks.join(""));
     expect(parsed.run_id).toBe("abcd1234");
     expect(parsed.mode).toBe("collaborative");
-    expect(parsed.current_stage).toBe("paper_positioning");
+    expect(parsed.current_stage).toBe("paper_plan");
     expect(parsed.completed).toBe(1);
-    expect(parsed.total).toBe(13);
+    expect(parsed.total).toBe(PIPELINE_STAGES.length);
   });
 
   it("includes the error when a run is blocked", async () => {
@@ -170,7 +172,7 @@ describe("modeCommand", () => {
     const policy = readGatePolicy(tmpDir);
     expect(policy.mode).toBe("autonomous");
     // Previously await_human under the collaborative preset.
-    expect(policy.gates["paper_positioning"]?.policy).toBe("auto");
+    expect(policy.gates["paper_plan"]?.policy).toBe("auto");
     expect(readFileSync(join(tmpDir, "PAPER.md"), "utf-8")).toContain("- Mode: autonomous");
     expect(readFileSync(join(tmpDir, "PAPER.md"), "utf-8")).toContain("- Collaboration: bounded");
   });
@@ -178,12 +180,12 @@ describe("modeCommand", () => {
   it("preserves a per-gate override across the switch", async () => {
     const policy = readGatePolicy(tmpDir);
     // Not the collaborative default for this stage: a deliberate override.
-    policy.gates["evidence_inventory"] = { policy: "await_human" };
+    policy.gates["self_review"] = { policy: "await_human" };
     writeGatePolicy(tmpDir, policy);
 
     await modeCommand("autonomous");
 
-    expect(readGatePolicy(tmpDir).gates["evidence_inventory"]?.policy).toBe("await_human");
+    expect(readGatePolicy(tmpDir).gates["self_review"]?.policy).toBe("await_human");
   });
 
   it("keeps gate policy unchanged when already in the requested mode", async () => {
@@ -216,7 +218,7 @@ describe("modeCommand", () => {
     // Switching mode must not disturb pipeline position.
     await modeCommand("autonomous");
     const state = readRunState(tmpDir);
-    expect(state.current_stage).toBe("paper_positioning");
+    expect(state.current_stage).toBe("paper_plan");
     expect(state.stage_status).toBe("running");
   });
 });
@@ -316,7 +318,7 @@ describe("TUI and controller coordination", () => {
         new Promise((resolve) => {
           abort.signal.addEventListener("abort", () => {
             controllerStopped = true;
-            resolve({ status: "interrupted", stageId: "paper_positioning" });
+            resolve({ status: "interrupted", stageId: "paper_plan" });
           });
         }),
       abort: async () => {},

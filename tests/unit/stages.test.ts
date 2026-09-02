@@ -127,7 +127,21 @@ describe("harness checkout presence", () => {
 describe("stage definitions", () => {
   it("covers every pipeline stage exactly once", () => {
     expect(Object.keys(STAGES).sort()).toEqual([...PIPELINE_STAGES].sort());
-    expect(TOTAL_STAGES).toBe(13);
+    // Spelled out so a change to the pipeline is a deliberate edit here, not a
+    // silent consequence of editing the stage table.
+    expect([...PIPELINE_STAGES]).toEqual([
+      "bootstrap",
+      "material_assessment",
+      "paper_plan",
+      "full_draft",
+      "evidence_reconciliation",
+      "self_review",
+      "independent_review",
+      "revision",
+      "publication_build",
+      "paper_candidate",
+    ]);
+    expect(TOTAL_STAGES).toBe(PIPELINE_STAGES.length);
   });
 
   it("gives every stage an id matching its key", () => {
@@ -153,7 +167,7 @@ describe("stage definitions", () => {
   });
 
   it("allows drafting the longest turn", () => {
-    const drafting = STAGES.canonical_drafting.timeoutMs;
+    const drafting = STAGES.full_draft.timeoutMs;
     for (const stage of Object.values(STAGES)) {
       expect(stage.timeoutMs).toBeLessThanOrEqual(drafting);
     }
@@ -176,7 +190,7 @@ describe("stage definitions", () => {
   });
 
   it("routes claim-evidence bindings away from locked PAPER.md sections", () => {
-    expect(STAGES.claim_evidence.validators).toContainEqual(
+    expect(STAGES.evidence_reconciliation.validators).toContainEqual(
       expect.objectContaining({
         type: "contract_section",
         contract: "EXPERIMENTS.md",
@@ -185,7 +199,7 @@ describe("stage definitions", () => {
       }),
     );
 
-    const outputs = STAGES.claim_evidence.expectedOutputs.join("\n");
+    const outputs = STAGES.evidence_reconciliation.expectedOutputs.join("\n");
     expect(outputs).toContain("EXPERIMENTS.md ## Claim-evidence bindings");
     expect(outputs).toContain("Do not edit the locked PAPER.md");
   });
@@ -240,7 +254,7 @@ describe.skipIf(!hasHarness)("harness references (checked against a real checkou
   it("keeps the drafting stage pointed at per-section guidance", () => {
     // section-writing is written for one active section at a time; the stage
     // is only allowed to claim perSection while the skill it loads agrees.
-    const drafting = STAGES.canonical_drafting;
+    const drafting = STAGES.full_draft;
     expect(drafting.perSection).toBe(true);
     const skill = readFileSync(join(HARNESS_CHECKOUT, drafting.harnessSkill!), "utf-8");
     expect(skill).toContain("active section");
@@ -288,13 +302,13 @@ describe("sequencing", () => {
   });
 
   it("remainingStages re-runs an incomplete stage", () => {
-    const remaining = remainingStages("paper_positioning", false);
-    expect(remaining[0]?.id).toBe("paper_positioning");
+    const remaining = remainingStages("paper_plan", false);
+    expect(remaining[0]?.id).toBe("paper_plan");
   });
 
   it("remainingStages skips a completed stage", () => {
-    const remaining = remainingStages("paper_positioning", true);
-    expect(remaining[0]?.id).toBe("claim_evidence");
+    const remaining = remainingStages("paper_plan", true);
+    expect(remaining[0]?.id).toBe("full_draft");
   });
 
   it("remainingStages is empty after the last stage completes", () => {
@@ -303,7 +317,7 @@ describe("sequencing", () => {
 
   it("stageNumber is 1-based", () => {
     expect(stageNumber("bootstrap")).toBe(1);
-    expect(stageNumber("paper_candidate")).toBe(13);
+    expect(stageNumber("paper_candidate")).toBe(PIPELINE_STAGES.length);
   });
 });
 
@@ -315,13 +329,13 @@ describe("renderStagePrompt", () => {
   const baseCtx = { mode: "autonomous" as const, history: [] as StageRecord[] };
 
   it("names the stage and its position", () => {
-    const prompt = renderStagePrompt(STAGES.canonical_drafting, baseCtx);
-    expect(prompt).toContain("Stage 7/13");
-    expect(prompt).toContain("Canonical drafting");
+    const prompt = renderStagePrompt(STAGES.full_draft, baseCtx);
+    expect(prompt).toContain(`Stage ${stageNumber("full_draft")}/${TOTAL_STAGES}`);
+    expect(prompt).toContain("Full draft");
   });
 
   it("points at the owner skill and marks sidecars as sidecars", () => {
-    const prompt = renderStagePrompt(STAGES.canonical_drafting, baseCtx);
+    const prompt = renderStagePrompt(STAGES.full_draft, baseCtx);
     expect(prompt).toContain(".agents/skills/section-writing/SKILL.md");
     expect(prompt).toContain("It owns this task");
     expect(prompt).toContain("never instead of it");
@@ -340,7 +354,7 @@ describe("renderStagePrompt", () => {
   });
 
   it("tells claim-evidence work not to modify locked contribution prose", () => {
-    const prompt = renderStagePrompt(STAGES.claim_evidence, baseCtx);
+    const prompt = renderStagePrompt(STAGES.evidence_reconciliation, baseCtx);
     expect(prompt).toContain("EXPERIMENTS.md ## Claim-evidence bindings");
     expect(prompt).toContain("Do not edit the locked PAPER.md ### Central thesis or ### Contributions");
   });
@@ -373,7 +387,7 @@ describe("renderStagePrompt", () => {
   });
 
   it("tells the agent to mark gaps when materials are partial", () => {
-    const prompt = renderStagePrompt(STAGES.canonical_drafting, {
+    const prompt = renderStagePrompt(STAGES.full_draft, {
       ...baseCtx,
       materialVerdict: "partial",
     });
@@ -382,7 +396,7 @@ describe("renderStagePrompt", () => {
   });
 
   it("tells the agent to stop when materials are unusable", () => {
-    const prompt = renderStagePrompt(STAGES.canonical_drafting, {
+    const prompt = renderStagePrompt(STAGES.full_draft, {
       ...baseCtx,
       materialVerdict: "unusable",
     });
@@ -390,7 +404,7 @@ describe("renderStagePrompt", () => {
   });
 
   it("adds no material section when materials are usable", () => {
-    const prompt = renderStagePrompt(STAGES.canonical_drafting, {
+    const prompt = renderStagePrompt(STAGES.full_draft, {
       ...baseCtx,
       materialVerdict: "usable",
     });
@@ -398,11 +412,11 @@ describe("renderStagePrompt", () => {
   });
 
   it("distinguishes the two modes in the ground rules", () => {
-    const collab = renderStagePrompt(STAGES.paper_positioning, {
+    const collab = renderStagePrompt(STAGES.paper_plan, {
       ...baseCtx,
       mode: "collaborative",
     });
-    const auto = renderStagePrompt(STAGES.paper_positioning, { ...baseCtx, mode: "autonomous" });
+    const auto = renderStagePrompt(STAGES.paper_plan, { ...baseCtx, mode: "autonomous" });
 
     expect(collab).toContain("reviewing at gates");
     expect(auto).toContain("not licence to");
@@ -420,7 +434,7 @@ describe("renderStagePrompt", () => {
 
 describe("renderRemediationPrompt", () => {
   it("names the failing checks specifically", () => {
-    const prompt = renderRemediationPrompt(STAGES.paper_positioning, {
+    const prompt = renderRemediationPrompt(STAGES.paper_plan, {
       mode: "autonomous",
       history: [],
       validationFailures: ["PAPER.md ## Paper identity is missing or empty"],
@@ -430,7 +444,7 @@ describe("renderRemediationPrompt", () => {
   });
 
   it("tells the agent not to fake a passing check", () => {
-    const prompt = renderRemediationPrompt(STAGES.claim_evidence, {
+    const prompt = renderRemediationPrompt(STAGES.evidence_reconciliation, {
       mode: "autonomous",
       history: [],
       validationFailures: ["something failed"],
@@ -439,7 +453,7 @@ describe("renderRemediationPrompt", () => {
   });
 
   it("retains claim-evidence routing and lock boundaries during remediation", () => {
-    const prompt = renderRemediationPrompt(STAGES.claim_evidence, {
+    const prompt = renderRemediationPrompt(STAGES.evidence_reconciliation, {
       mode: "autonomous",
       history: [],
       validationFailures: ["Paper contracts failed structural validation"],
@@ -452,8 +466,8 @@ describe("renderRemediationPrompt", () => {
 
 describe("renderSummaryRequest", () => {
   it("asks for a short summary and no further work", () => {
-    const prompt = renderSummaryRequest(STAGES.story_outline);
-    expect(prompt).toContain("Story and outline");
+    const prompt = renderSummaryRequest(STAGES.paper_plan);
+    expect(prompt).toContain("Paper plan");
     expect(prompt).toContain("Do not do further work");
   });
 });
@@ -575,7 +589,7 @@ describe("validateStage", () => {
   it("checks a contract section", async () => {
     writeFileSync(join(tmpDir, "PAPER.md"), "## Paper identity\n\nA real paper.\n");
     const stage = {
-      ...STAGES.paper_positioning,
+      ...STAGES.paper_plan,
       validators: [
         {
           type: "contract_section" as const,
@@ -591,14 +605,14 @@ describe("validateStage", () => {
   });
 
   it("requires substantive claim-evidence bindings in EXPERIMENTS.md", async () => {
-    const validator = STAGES.claim_evidence.validators.find(
+    const validator = STAGES.evidence_reconciliation.validators.find(
       (candidate) =>
         candidate.type === "contract_section" &&
         candidate.contract === "EXPERIMENTS.md" &&
         candidate.heading === "## Claim-evidence bindings",
     );
     expect(validator).toBeDefined();
-    const stage = { ...STAGES.claim_evidence, validators: [validator!] };
+    const stage = { ...STAGES.evidence_reconciliation, validators: [validator!] };
 
     expect((await validateStage(stage, tmpDir)).passed).toBe(false);
 
@@ -634,7 +648,7 @@ describe("validateStage", () => {
     writeFileSync(join(tmpDir, "paper", "sections", "01_intro.tex"), "x".repeat(300));
 
     const stage = {
-      ...STAGES.canonical_drafting,
+      ...STAGES.full_draft,
       validators: [
         {
           type: "dir_has_content" as const,
@@ -655,7 +669,7 @@ describe("validateStage", () => {
     writeFileSync(join(tmpDir, "paper", "sections", "01_intro.tex"), "% stub\n");
 
     const stage = {
-      ...STAGES.canonical_drafting,
+      ...STAGES.full_draft,
       validators: [
         {
           type: "dir_has_content" as const,
@@ -970,7 +984,7 @@ describe("required reading", () => {
   const ctx = { mode: "autonomous" as const, history: [] };
 
   it("states the files as an instruction, not an invitation", () => {
-    const prompt = renderStagePrompt(STAGES.canonical_drafting, ctx);
+    const prompt = renderStagePrompt(STAGES.full_draft, ctx);
 
     expect(prompt).toContain("## Required reading");
     expect(prompt).toContain("not");
@@ -981,7 +995,7 @@ describe("required reading", () => {
   });
 
   it("tells the agent to report a missing file rather than pretend", () => {
-    expect(renderStagePrompt(STAGES.story_outline, ctx)).toContain(
+    expect(renderStagePrompt(STAGES.paper_plan, ctx)).toContain(
       "say so in your summary rather",
     );
   });
@@ -996,7 +1010,7 @@ describe("renderSectionPrompt", () => {
   const section = { path: "paper/sections/04_method.tex", index: 3, total: 7 };
 
   it("names the one file this turn is for", () => {
-    const prompt = renderSectionPrompt(STAGES.canonical_drafting, ctx, section);
+    const prompt = renderSectionPrompt(STAGES.full_draft, ctx, section);
 
     expect(prompt).toContain("section 3/7");
     expect(prompt).toContain("paper/sections/04_method.tex");
@@ -1004,13 +1018,13 @@ describe("renderSectionPrompt", () => {
   });
 
   it("points at the section responsibilities agreed earlier", () => {
-    const prompt = renderSectionPrompt(STAGES.canonical_drafting, ctx, section);
+    const prompt = renderSectionPrompt(STAGES.full_draft, ctx, section);
     expect(prompt).toContain("Section");
     expect(prompt).toContain("responsibilities");
   });
 
   it("carries the owner skill, required reading, and the fabrication rule", () => {
-    const prompt = renderSectionPrompt(STAGES.canonical_drafting, ctx, section);
+    const prompt = renderSectionPrompt(STAGES.full_draft, ctx, section);
 
     expect(prompt).toContain(".agents/skills/section-writing/SKILL.md");
     expect(prompt).toContain("## Required reading");
@@ -1019,7 +1033,7 @@ describe("renderSectionPrompt", () => {
 
   it("passes on a partial material verdict", () => {
     const prompt = renderSectionPrompt(
-      STAGES.canonical_drafting,
+      STAGES.full_draft,
       { ...ctx, materialVerdict: "partial" },
       section,
     );
@@ -1029,7 +1043,7 @@ describe("renderSectionPrompt", () => {
 
   it("prioritises human guidance when a gate supplied it", () => {
     const prompt = renderSectionPrompt(
-      STAGES.canonical_drafting,
+      STAGES.full_draft,
       { ...ctx, humanGuidance: "lead with the failure case" },
       section,
     );

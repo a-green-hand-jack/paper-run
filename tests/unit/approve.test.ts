@@ -15,7 +15,7 @@ function state(status: RunState["stage_status"]): RunState {
     run_id: "abcdef12",
     run_branch: "paper-run/abcdef12",
     mode: "collaborative",
-    current_stage: "story_outline",
+    current_stage: "paper_plan",
     stage_status: status,
     started_at: "2026-08-30T10:00:00.000Z",
     updated_at: "2026-08-30T10:00:00.000Z",
@@ -35,7 +35,7 @@ describe("approveGate", () => {
     writeRunState(tmpDir, state("gate_waiting"));
 
     expect(approveGate(tmpDir).stage_status).toBe("approved");
-    expect(readRunState(tmpDir).current_stage).toBe("story_outline");
+    expect(readRunState(tmpDir).current_stage).toBe("paper_plan");
   });
 
   it("refuses every non-waiting status without changing state", () => {

@@ -26,7 +26,7 @@ Then read `AGENTS.md` in full and the owner skill's file under `.agents/skills/`
 before answering — the snapshots above are a starting point, not the source of
 truth. Report:
 
-1. **Stage** — its id, its position in the thirteen-stage sequence, and one or
+1. **Stage** — its id, its position in the pipeline sequence, and one or
    two sentences on what this stage is for.
 2. **Owner skill** — the single harness skill that owns this stage's work,
    as routed by `AGENTS.md`, with its path under `.agents/skills/`. If the router

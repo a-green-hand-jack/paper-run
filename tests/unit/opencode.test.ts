@@ -528,9 +528,9 @@ describe("waitForIdle", () => {
 
     await expect(waitForIdle(client, {
       sessionId: "ses_1",
-      stageId: "citation_integration",
+      stageId: "evidence_reconciliation",
       timeoutMs: 20,
-    })).rejects.toThrow(/citation_integration.*timed out/);
+    })).rejects.toThrow(/evidence_reconciliation.*timed out/);
   });
 });
 

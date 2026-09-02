@@ -6,7 +6,7 @@ describe("run plans", () => {
     const plan = createRunPlan("review-only");
     expect(plan.profile).toBe("review-only");
     expect(plan.stages).toEqual(PLAN_PROFILES["review-only"]);
-    expect(plan.skipped.map((item) => item.stage)).toContain("canonical_drafting");
+    expect(plan.skipped.map((item) => item.stage)).toContain("full_draft");
   });
 
   it("provides a strict report-only profile without revision", () => {

@@ -26,22 +26,14 @@ const FILES = {
   assessment: "assessment.json",
 } as const
 
-/** The canonical stage order, mirrored from paper-run's own constants. */
-const PIPELINE_STAGES = [
-  "bootstrap",
-  "material_assessment",
-  "evidence_inventory",
-  "paper_positioning",
-  "claim_evidence",
-  "story_outline",
-  "canonical_drafting",
-  "citation_integration",
-  "self_review",
-  "independent_review",
-  "revision",
-  "publication_build",
-  "paper_candidate",
-]
+/**
+ * The canonical stage order, substituted at install time.
+ *
+ * This used to be a hand-maintained copy of paper-run's own list, which is a
+ * second source of truth that nothing type-checks and nothing tests. The
+ * installer fills it in instead, so the two can no longer disagree.
+ */
+const PIPELINE_STAGES: string[] = {{PIPELINE_STAGES}}
 
 function statePath(directory: string, file: string): string {
   return join(directory, PAPER_RUN_DIR, file)

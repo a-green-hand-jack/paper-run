@@ -24,6 +24,7 @@ import { fileURLToPath } from "node:url";
 
 import { OPENCODE_DIR, OPENCODE_CONFIG, PAPER_RUN_DIR, STATE_FILES } from "../utils/constants.js";
 import { PaperRunError } from "../utils/errors.js";
+import { PIPELINE_STAGES } from "../state/gate-presets.js";
 import { log } from "../utils/logger.js";
 
 // ---------------------------------------------------------------------------
@@ -216,7 +217,12 @@ export async function installAdapter(
   const root = resolve(projectDir);
   const templatesDir = findTemplatesDir();
   const force = opts.force ?? false;
-  const values: Record<string, string> = { MODEL: opts.model ?? DEFAULT_MODEL };
+  const values: Record<string, string> = {
+    MODEL: opts.model ?? DEFAULT_MODEL,
+    // The adapter tool reports pipeline position to the model. Substituting the
+    // list keeps it from drifting out of step with the controller's own.
+    PIPELINE_STAGES: JSON.stringify([...PIPELINE_STAGES], null, 2),
+  };
 
   const installed: string[] = [];
   const skipped: string[] = [];

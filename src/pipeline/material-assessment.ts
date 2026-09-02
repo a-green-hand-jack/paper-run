@@ -30,6 +30,7 @@ import { join, relative, resolve } from "node:path";
 import { AssessmentSchema } from "../state/schema.js";
 import type { Assessment } from "../state/schema.js";
 import { readAssessment } from "../state/store.js";
+import { stageNumber, TOTAL_STAGES } from "./stages.js";
 import { PAPER_RUN_DIR, STATE_FILES } from "../utils/constants.js";
 import { log } from "../utils/logger.js";
 
@@ -121,7 +122,7 @@ export function renderAssessmentPrompt(opts: {
     : "**`BRIEF.md` is missing or empty.** That alone is close to disqualifying: without a brief there is no stated intent to write towards.";
 
   return [
-    "# Stage 2/13: Material assessment",
+    `# Stage ${stageNumber("material_assessment")}/${TOTAL_STAGES}: Material assessment`,
     "",
     "Judge whether the supplied materials can support an honest paper. Do not write",
     "any part of the manuscript in this turn.",

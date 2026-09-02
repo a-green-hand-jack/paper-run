@@ -4,11 +4,13 @@ import { PaperRunError } from "../utils/errors.js";
 
 export const PLAN_PROFILES: Readonly<Record<string, readonly StageId[]>> = {
   full: PIPELINE_STAGES,
+  // An imported manuscript already has prose, so it skips drafting and goes
+  // straight to reconciling what the text claims against the evidence.
   "existing-manuscript": [
     "bootstrap",
     "material_assessment",
-    "paper_positioning",
-    "claim_evidence",
+    "paper_plan",
+    "evidence_reconciliation",
     "self_review",
     "independent_review",
     "revision",
@@ -18,6 +20,7 @@ export const PLAN_PROFILES: Readonly<Record<string, readonly StageId[]>> = {
   "review-and-revise": [
     "bootstrap",
     "material_assessment",
+    "evidence_reconciliation",
     "self_review",
     "independent_review",
     "revision",
@@ -26,6 +29,7 @@ export const PLAN_PROFILES: Readonly<Record<string, readonly StageId[]>> = {
   "review-only": [
     "bootstrap",
     "material_assessment",
+    "evidence_reconciliation",
     "self_review",
     "independent_review",
     "revision",
@@ -71,6 +75,11 @@ export function validateRunPlan(stages: readonly string[]): void {
   if (!seen.has("bootstrap")) {
     throw new PaperRunError("Run plans must include bootstrap.", {
       hint: "Bootstrap validates the writing repository before any other stage runs.",
+    });
+  }
+  if (seen.has("full_draft") && !seen.has("paper_plan")) {
+    throw new PaperRunError("full_draft requires paper_plan in the same run plan.", {
+      hint: "Drafting builds the sections named in PAPER.md ### Section responsibilities, which paper_plan writes.",
     });
   }
   if (seen.has("revision") && !seen.has("independent_review")) {

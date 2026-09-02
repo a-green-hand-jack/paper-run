@@ -23,7 +23,7 @@ tool) before reporting — do not report on a file you could not actually see.
 
 Then tell the user, concisely:
 
-1. **Current stage** — its id, and where it falls in the thirteen-stage pipeline
+1. **Current stage** — its id, and where it falls in the pipeline
    (`bootstrap`, `material_assessment`, `evidence_inventory`, `paper_positioning`,
    `claim_evidence`, `story_outline`, `canonical_drafting`, `citation_integration`,
    `self_review`, `independent_review`, `revision`, `publication_build`,
@@ -32,7 +32,7 @@ Then tell the user, concisely:
    `approved`, `blocked`, or `completed`. Say what that status means for what
    happens next.
 3. **Operating mode** — `autonomous` or `collaborative`.
-4. **Progress** — completed stages out of 13, counted from
+4. **Progress** — completed stages out of the run's plan, counted from
    `stage-history.json` (entries with status `completed`).
 5. **Last checkpoint** — the `completed_at` timestamp and short `commit_sha` of
    the most recent history entry.

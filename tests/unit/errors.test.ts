@@ -73,8 +73,8 @@ describe("specific error classes", () => {
   });
 
   it("StageTimeoutError", () => {
-    const err = new StageTimeoutError("canonical_drafting", 600_000);
-    expect(err.stageId).toBe("canonical_drafting");
+    const err = new StageTimeoutError("full_draft", 600_000);
+    expect(err.stageId).toBe("full_draft");
     expect(err.message).toContain("600s");
   });
 

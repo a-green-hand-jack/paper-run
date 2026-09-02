@@ -26,7 +26,7 @@ import {
   writeStageHistory,
 } from "../../src/state/store.js";
 import type { RunState } from "../../src/state/schema.js";
-import { STAGES } from "../../src/pipeline/stages.js";
+import { STAGES, stageNumber, TOTAL_STAGES } from "../../src/pipeline/stages.js";
 import { GATE_CHOICES } from "../../src/controller/gate.js";
 import { commitCheckpoint } from "../../src/utils/git.js";
 import { initializeHarnessTrust } from "../../src/harness/harness.js";
@@ -244,8 +244,9 @@ describe("running a stage", () => {
     });
 
     await expect(controller.run()).resolves.toMatchObject({ status: "interrupted" });
-    expect((controller as any).stageTimeoutMs(STAGES.bootstrap)).toBe(12.5 * 60_000);
-    expect((controller as any).stageTimeoutMs(STAGES.canonical_drafting)).toBe(112.5 * 60_000);
+    expect((controller as any).stageTimeoutMs(STAGES.bootstrap)).toBe(STAGES.bootstrap.timeoutMs * 2.5);
+    // Derived, so a budget change in the stage table is not a test failure.
+    expect((controller as any).stageTimeoutMs(STAGES.full_draft)).toBe(STAGES.full_draft.timeoutMs * 2.5);
   });
 
   it("rejects a programmatic multiplier that conflicts with recorded state", async () => {
@@ -478,7 +479,7 @@ describe("material assessment", () => {
 
     // Nothing downstream ran.
     const history = readStageHistory(tmpDir);
-    expect(history.stages.some((s) => s.stage_id === "paper_positioning")).toBe(false);
+    expect(history.stages.some((s) => s.stage_id === "paper_plan")).toBe(false);
 
     // The judgement is still on the record.
     const record = history.stages.find((s) => s.stage_id === "material_assessment");
@@ -557,7 +558,7 @@ describe("material assessment", () => {
 
     const ac = new AbortController();
     const controller = makeController(client, "autonomous", ac.signal);
-    abortAfterStage("evidence_inventory", ac);
+    abortAfterStage("self_review", ac);
     await controller.run();
 
     const prompts: string[] = client._prompts;
@@ -1177,7 +1178,7 @@ describe("per-section drafting", () => {
 
   it("sends one turn per section instead of one turn for the manuscript", async () => {
     seedSections(["02_intro.tex", "04_method.tex", "05_exp.tex"]);
-    writeRunState(tmpDir, makeRunState({ current_stage: "canonical_drafting" }));
+    writeRunState(tmpDir, makeRunState({ current_stage: "full_draft" }));
 
     const ac = new AbortController();
     const client = mockClient({
@@ -1205,7 +1206,7 @@ describe("per-section drafting", () => {
   });
 
   it("falls back to a single turn when the section layout is missing", async () => {
-    writeRunState(tmpDir, makeRunState({ current_stage: "canonical_drafting" }));
+    writeRunState(tmpDir, makeRunState({ current_stage: "full_draft" }));
 
     const ac = new AbortController();
     const client = mockClient({ onPrompt: () => setTimeout(() => ac.abort(), 5) });
@@ -1214,13 +1215,13 @@ describe("per-section drafting", () => {
 
     const prompts: string[] = client._prompts;
     expect(prompts).toHaveLength(1);
-    expect(prompts[0]).toContain("Stage 7/13");
+    expect(prompts[0]).toContain(`Stage ${stageNumber("full_draft")}/${TOTAL_STAGES}`);
     expect(prompts[0]).not.toContain("section 1/");
   });
 
   it("names the required reading in every section turn", async () => {
     seedSections(["02_intro.tex", "04_method.tex"]);
-    writeRunState(tmpDir, makeRunState({ current_stage: "canonical_drafting" }));
+    writeRunState(tmpDir, makeRunState({ current_stage: "full_draft" }));
 
     const ac = new AbortController();
     const client = mockClient({
