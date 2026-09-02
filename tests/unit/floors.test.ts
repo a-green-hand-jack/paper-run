@@ -398,6 +398,20 @@ describe("the appendix anchor is structural, not a content promise", () => {
     expect(result.passed).toBe(true);
   });
 
+  it("tells the appendix to empty itself, never to drop its required input", async () => {
+    section("02_intro", "Real prose about pruning.\n");
+    section("10_appendix", "\\section{Appendix}\nTODO\n");
+    main(["02_intro", "10_appendix"]);
+
+    const result = await validateStage(stageWith(validator), tmpDir);
+    const message = result.checks[0]!.message ?? "";
+
+    expect(message).toContain("leave the file empty");
+    expect(message).toContain("check-structure.py requires");
+    // The body advice would send it into a structure violation.
+    expect(message).not.toContain("stops inputting it");
+  });
+
   it("still rejects an appendix that prints TODO into the PDF", async () => {
     // This is what shipped last time: \section{Appendix} followed by the bare
     // word TODO, rendered into the paper.

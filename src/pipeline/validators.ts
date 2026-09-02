@@ -315,15 +315,29 @@ async function runValidator(
       const stats = inspectManuscriptSources(projectDir);
       const empty = stats.placeholderSections;
 
+      // The two cases need opposite advice, and giving the appendix the body
+      // advice would push the writer into a structure violation:
+      // `check-structure.py` requires main.tex to input the appendix, so
+      // "stop inputting it" is not available there.
+      const anchors = empty.filter((stem) => /^1\d_/.test(stem));
+      const body = empty.filter((stem) => !/^1\d_/.test(stem));
+      const advice = [
+        body.length > 0
+          ? `${body.join(", ")} — write the section, or drop it from PAPER.md `
+            + `### Section responsibilities so the manuscript stops inputting it`
+          : "",
+        anchors.length > 0
+          ? `${anchors.join(", ")} — this slot prints a placeholder into the PDF. `
+            + `Either write real content or leave the file empty; do not remove its `
+            + `\\input, which check-structure.py requires`
+          : "",
+      ].filter((line) => line.length > 0);
+
       return {
         name: "section-substance",
         passed: empty.length === 0,
         required: validator.required,
-        message:
-          empty.length === 0
-            ? undefined
-            : `${validator.message}: ${empty.join(", ")} — write the section, or drop it from `
-              + `PAPER.md ### Section responsibilities so the manuscript stops inputting it`,
+        message: empty.length === 0 ? undefined : `${validator.message}: ${advice.join("; ")}`,
       };
     }
 
