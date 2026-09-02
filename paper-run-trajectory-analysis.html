@@ -1,0 +1,748 @@
+<title>两条写作轨迹的解剖</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@500;700&family=IBM+Plex+Sans:ital,wght@0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --ground:      #F1F4F4;
+    --surface:     #FFFFFF;
+    --surface-sunk:#E8EDEC;
+    --ink:         #16201F;
+    --ink-soft:    #3A4948;
+    --muted:       #5E6E6C;
+    --rule:        #D3DAD9;
+    --rule-strong: #B4C0BE;
+    --accent:      #1C5C7E;
+    --accent-soft: #E2EDF3;
+    --caution:     #8A5D10;
+    --caution-soft:#F5EBD8;
+    --stop:        #97382C;
+    --stop-soft:   #F6E4E0;
+    --ok:          #2E6B4F;
+    --ok-soft:     #E0EEE7;
+    --gt:          #4A4A55;
+
+    --display: "Noto Serif SC", "Songti SC", "SimSun", Georgia, serif;
+    --body: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "PingFang SC",
+            "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+    --measure: 70ch;
+    --pad: clamp(1.1rem, 4vw, 3rem);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #0E1514;
+      --surface:     #151E1D;
+      --surface-sunk:#1B2625;
+      --ink:         #E3EAE8;
+      --ink-soft:    #C0CCCA;
+      --muted:       #8E9E9C;
+      --rule:        #293634;
+      --rule-strong: #3B4B49;
+      --accent:      #74B4D6;
+      --accent-soft: #16303D;
+      --caution:     #D2A353;
+      --caution-soft:#33280F;
+      --stop:        #E0897A;
+      --stop-soft:   #3A1F1A;
+      --ok:          #6FBF95;
+      --ok-soft:     #16301F;
+      --gt:          #9BA0AD;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground:      #0E1514;
+    --surface:     #151E1D;
+    --surface-sunk:#1B2625;
+    --ink:         #E3EAE8;
+    --ink-soft:    #C0CCCA;
+    --muted:       #8E9E9C;
+    --rule:        #293634;
+    --rule-strong: #3B4B49;
+    --accent:      #74B4D6;
+    --accent-soft: #16303D;
+    --caution:     #D2A353;
+    --caution-soft:#33280F;
+    --stop:        #E0897A;
+    --stop-soft:   #3A1F1A;
+    --ok:          #6FBF95;
+    --ok-soft:     #16301F;
+    --gt:          #9BA0AD;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 16px;
+    line-height: 1.68;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: var(--pad); }
+  .col  { max-width: var(--measure); }
+
+  /* ---------- masthead ---------- */
+  header.masthead {
+    border-bottom: 2px solid var(--rule-strong);
+    padding-bottom: 1.6rem;
+    margin-bottom: 2.4rem;
+  }
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: .74rem;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin: 0 0 .9rem;
+  }
+  h1 {
+    font-family: var(--display);
+    font-weight: 700;
+    font-size: clamp(1.85rem, 4.6vw, 2.9rem);
+    line-height: 1.2;
+    margin: 0 0 .7rem;
+    text-wrap: balance;
+    letter-spacing: -.01em;
+  }
+  .standfirst {
+    font-size: 1.06rem;
+    color: var(--ink-soft);
+    max-width: var(--measure);
+    margin: 0 0 1.5rem;
+  }
+  .runmeta {
+    display: flex; flex-wrap: wrap; gap: .45rem .75rem;
+    font-family: var(--mono); font-size: .76rem; color: var(--muted);
+  }
+  .runmeta span {
+    background: var(--surface-sunk);
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    padding: .18rem .5rem;
+    white-space: nowrap;
+  }
+
+  /* ---------- sections ---------- */
+  section { margin: 0 0 3.4rem; }
+  .sec-head { display: flex; align-items: baseline; gap: .8rem; margin: 0 0 .3rem; }
+  .sec-num {
+    font-family: var(--mono); font-size: .8rem; font-weight: 500;
+    color: var(--accent); flex: none; padding-top: .25rem;
+  }
+  h2 {
+    font-family: var(--display); font-weight: 700;
+    font-size: clamp(1.25rem, 2.6vw, 1.6rem);
+    line-height: 1.32; margin: 0; text-wrap: balance;
+  }
+  .sec-sub {
+    margin: .1rem 0 1.4rem calc(.8rem + 2.6ch);
+    color: var(--muted); font-size: .93rem; max-width: var(--measure);
+  }
+  h3 {
+    font-family: var(--body); font-weight: 600; font-size: 1rem;
+    margin: 2rem 0 .6rem; color: var(--ink);
+  }
+  p { margin: 0 0 1rem; max-width: var(--measure); }
+  strong { font-weight: 600; }
+  code, .m { font-family: var(--mono); font-size: .875em; }
+  code {
+    background: var(--surface-sunk); border: 1px solid var(--rule);
+    border-radius: 3px; padding: .06em .32em;
+  }
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+
+  /* ---------- callouts ---------- */
+  .note {
+    border-left: 3px solid var(--rule-strong);
+    background: var(--surface);
+    padding: 1rem 1.15rem; margin: 1.4rem 0;
+    max-width: var(--measure);
+  }
+  .note.correct { border-left-color: var(--stop);  background: var(--stop-soft); }
+  .note.key     { border-left-color: var(--accent);background: var(--accent-soft); }
+  .note.win     { border-left-color: var(--ok);    background: var(--ok-soft); }
+  .note.caution { border-left-color: var(--caution); background: var(--caution-soft); }
+  .note p:last-child { margin-bottom: 0; }
+  .note .label {
+    font-family: var(--mono); font-size: .7rem; letter-spacing: .12em;
+    text-transform: uppercase; display: block; margin-bottom: .45rem; opacity: .85;
+  }
+  .note.correct .label { color: var(--stop); }
+  .note.key .label     { color: var(--accent); }
+  .note.win .label     { color: var(--ok); }
+  .note.caution .label { color: var(--caution); }
+
+  /* ---------- tables ---------- */
+  .scroll { overflow-x: auto; margin: 1.3rem 0; }
+  table {
+    border-collapse: collapse; width: 100%; min-width: 520px;
+    font-size: .89rem; background: var(--surface);
+    border: 1px solid var(--rule);
+  }
+  caption {
+    caption-side: top; text-align: left; color: var(--muted);
+    font-size: .82rem; padding: 0 0 .5rem; font-family: var(--mono);
+  }
+  th, td { padding: .5rem .7rem; border-bottom: 1px solid var(--rule); text-align: left; }
+  thead th {
+    font-family: var(--mono); font-size: .74rem; font-weight: 500;
+    letter-spacing: .06em; text-transform: uppercase; color: var(--muted);
+    border-bottom: 1px solid var(--rule-strong); vertical-align: bottom;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  .num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .hi  { color: var(--stop); font-weight: 600; }
+  .good{ color: var(--ok); font-weight: 600; }
+  tfoot td { border-top: 1px solid var(--rule-strong); font-weight: 600; }
+  tr.spot td { background: var(--stop-soft); }
+
+  /* ---------- citation chart ---------- */
+  .chart { margin: 1.4rem 0 .6rem; }
+  .chart-row {
+    display: grid;
+    grid-template-columns: minmax(105px, 1.3fr) 3fr;
+    gap: .55rem 1rem; align-items: center;
+    padding: .5rem 0; border-bottom: 1px solid var(--rule);
+  }
+  .chart-row:last-child { border-bottom: none; }
+  .chart-label { font-size: .86rem; line-height: 1.3; }
+  .chart-label .sub { display: block; color: var(--muted); font-size: .76rem; font-family: var(--mono); }
+  .bars { display: grid; gap: 3px; }
+  .bar { display: grid; grid-template-columns: 3.2rem 1fr; align-items: center; gap: .5rem; }
+  .bar .who { font-family: var(--mono); font-size: .68rem; color: var(--muted); text-align: right; }
+  .bar .track { height: 13px; background: var(--surface-sunk); border-radius: 2px; position: relative; }
+  .bar .fill { height: 100%; border-radius: 2px; display: block; }
+  .bar .val {
+    position: absolute; left: calc(var(--w) + 5px); top: 50%; transform: translateY(-50%);
+    font-family: var(--mono); font-size: .7rem; color: var(--ink-soft);
+    font-variant-numeric: tabular-nums;
+  }
+  .f-gt { background: var(--gt); }
+  .f-cx { background: var(--caution); }
+  .f-pr { background: var(--accent); }
+  .legend {
+    display: flex; gap: 1.1rem; flex-wrap: wrap; font-family: var(--mono);
+    font-size: .74rem; color: var(--muted); margin-top: .9rem;
+  }
+  .legend i { display: inline-block; width: 11px; height: 11px; border-radius: 2px; margin-right: .35rem; vertical-align: -1px; }
+
+  /* ---------- budget bar ---------- */
+  .budget { display: grid; gap: .55rem; margin: 1.3rem 0; }
+  .budget .seg-row { display: grid; grid-template-columns: 1fr; gap: .3rem; }
+  .segbar { display: flex; height: 34px; border-radius: 3px; overflow: hidden; border: 1px solid var(--rule); }
+  .segbar div {
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: .7rem; color: #fff; overflow: hidden; white-space: nowrap;
+  }
+  .s-write { background: var(--accent); }
+  .s-rev   { background: var(--stop); }
+  .s-pub   { background: var(--caution); }
+  .s-bug   { background: var(--rule-strong); color: var(--ink) !important; }
+  .s-codex { background: var(--ok); }
+  .budget .cap { font-family: var(--mono); font-size: .74rem; color: var(--muted); }
+
+  /* ---------- two-track trajectory ---------- */
+  .tracks { display: grid; grid-template-columns: 1fr; gap: 1.2rem; margin: 1.4rem 0; }
+  @media (min-width: 800px) { .tracks { grid-template-columns: 1fr 1fr; gap: 1.8rem; } }
+  .track {
+    background: var(--surface); border: 1px solid var(--rule);
+    border-radius: 4px; padding: 1.1rem 1.2rem;
+  }
+  .track h4 {
+    margin: 0 0 .2rem; font-family: var(--body); font-size: .95rem; font-weight: 600;
+    display: flex; align-items: center; gap: .45rem;
+  }
+  .track h4 i { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+  .track .tmeta { font-family: var(--mono); font-size: .74rem; color: var(--muted); margin: 0 0 .9rem; }
+  ol.steps { margin: 0; padding: 0; list-style: none; counter-reset: s; }
+  ol.steps li {
+    position: relative; padding: 0 0 .55rem 1.9rem; font-size: .86rem; line-height: 1.5;
+    counter-increment: s;
+  }
+  ol.steps li::before {
+    content: counter(s); position: absolute; left: 0; top: .12rem;
+    font-family: var(--mono); font-size: .68rem; color: var(--muted);
+    width: 1.25rem; height: 1.25rem; border: 1px solid var(--rule-strong); border-radius: 50%;
+    display: grid; place-items: center;
+  }
+  ol.steps li.flag::before { border-color: var(--stop); color: var(--stop); }
+  ol.steps li.win::before  { border-color: var(--ok); color: var(--ok); }
+  ol.steps li .why { display: block; color: var(--muted); font-size: .78rem; }
+
+  /* ---------- fix cards ---------- */
+  .fixes { display: grid; gap: 1rem; margin: 1.4rem 0; }
+  @media (min-width: 760px) { .fixes { grid-template-columns: 1fr 1fr; } }
+  .fix {
+    background: var(--surface); border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent); border-radius: 3px; padding: 1rem 1.15rem;
+  }
+  .fix .rank {
+    font-family: var(--mono); font-size: .7rem; letter-spacing: .1em;
+    text-transform: uppercase; color: var(--accent); display: block; margin-bottom: .35rem;
+  }
+  .fix h4 { margin: 0 0 .5rem; font-size: .96rem; font-weight: 600; font-family: var(--body); }
+  .fix p { font-size: .87rem; margin: 0 0 .55rem; max-width: none; }
+  .fix p:last-child { margin-bottom: 0; }
+  .fix .target { font-family: var(--mono); font-size: .75rem; color: var(--muted); }
+
+  ul.tight { margin: 0 0 1rem; padding-left: 1.15rem; max-width: var(--measure); }
+  ul.tight li { margin-bottom: .35rem; }
+
+  footer {
+    border-top: 1px solid var(--rule); margin-top: 3rem; padding-top: 1.2rem;
+    font-family: var(--mono); font-size: .76rem; color: var(--muted);
+  }
+  footer p { max-width: none; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <p class="eyebrow">paper-run · 评测取证 · pwb-0011</p>
+  <h1>两条写作轨迹的解剖</h1>
+  <p class="standfirst">
+    同一个任务、同一个模型、同一份材料，paper-run 的十阶段流水线与 codex 单趟写作各自
+    产出了一篇 ICLR 风格的论文。这份文档把两条轨迹拆到 section、到 token、到具体的引用键，
+    定位剩余差距真正的所在——它比"写得短一点"要具体得多，也比我上一次报告的更集中。
+  </p>
+  <div class="runmeta">
+    <span>task pwb-0011</span>
+    <span>gpt-5.6-terra / medium（两臂一致）</span>
+    <span>paper-run @ dbdacee</span>
+    <span>harness v0.3.1</span>
+    <span>2026-09-02</span>
+  </div>
+</header>
+
+<!-- ============ 0. CORRECTION ============ -->
+<section>
+  <div class="sec-head"><span class="sec-num">00</span><h2>先更正一个数字</h2></div>
+  <p class="sec-sub">我上一条 issue 评论里的篇幅对比是错的，而且错的方向让 paper-run 显得比实际差。</p>
+
+  <div class="note correct">
+    <span class="label">Correction</span>
+    <p>
+      <code>bin/score.py</code> 的 <code>word_count</code> 用 <code>[A-Za-z]+</code> 统计整个展开后的
+      <code>main.tex</code>，<strong>包含导言区</strong>。codex 把 ICLR 模板那七百多行宏定义原样内联进了
+      <code>main.tex</code>，于是 <code>\rvepsilon</code>、<code>\includegraphics</code> 这类宏名被当成了 2,275 个"词"；
+      paper-run 的导言区在 <code>venue_preamble.tex</code> 里，只贡献 156 个。
+    </p>
+    <p>
+      这个度量把两臂放在了不同的起跑线上。按正文实际散文重新数（剥掉宏名）：
+    </p>
+  </div>
+
+  <div class="scroll">
+  <table>
+    <caption>篇幅：错误度量 vs 正文散文</caption>
+    <thead><tr>
+      <th>manuscript</th>
+      <th class="num">score.py 报告值</th>
+      <th class="num">其中导言区</th>
+      <th class="num">正文散文</th>
+      <th class="num">页数</th>
+    </tr></thead>
+    <tbody>
+      <tr><td>paper-run</td><td class="num">3,848</td><td class="num">156</td><td class="num good">3,247</td><td class="num">10</td></tr>
+      <tr><td>codex</td><td class="num">5,568</td><td class="num hi">2,275</td><td class="num">2,648</td><td class="num">9</td></tr>
+      <tr><td>ground truth</td><td class="num">—</td><td class="num">—</td><td class="num">4,867</td><td class="num">—</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>
+    <strong>paper-run 写得比 codex 长，不是短 45%。</strong> "流水线刚好停在下限上方就不写了"——这个结论
+    对篇幅不成立。3,247 词、10 页，比 codex 的 2,648 词 / 9 页更接近 ground truth 的 4,867。
+    <code>manuscript_length</code> 那条下限（9 页 → 3,465 词）确实在 full_draft 第一次尝试时拦下了 2,765 词的稿子，
+    这一拦是对的；但它拦下之后的产出并没有停在线上。
+  </p>
+  <p>
+    真正的差距在别处，而且只在一个地方。
+  </p>
+</section>
+
+<!-- ============ 1. THE GAP ============ -->
+<section>
+  <div class="sec-head"><span class="sec-num">01</span><h2>引用召回的缺口全部落在一个 section 里</h2></div>
+  <p class="sec-sub">把三篇稿子按 section 拆开，逐节统计词数与唯一引用键。</p>
+
+  <div class="chart">
+    <div class="chart-row" style="border-bottom:1px solid var(--rule-strong);padding-bottom:.35rem">
+      <div class="chart-label" style="font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">section</div>
+      <div style="font-family:var(--mono);font-size:.72rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em">唯一引用键数量</div>
+    </div>
+
+    <div class="chart-row">
+      <div class="chart-label">Introduction<span class="sub">720 / 438 / 483 词</span></div>
+      <div class="bars">
+        <div class="bar"><span class="who">GT</span><span class="track"><span class="fill f-gt" style="width:43%"></span><span class="val" style="--w:43%">10</span></span></div>
+        <div class="bar"><span class="who">codex</span><span class="track"><span class="fill f-cx" style="width:43%"></span><span class="val" style="--w:43%">10</span></span></div>
+        <div class="bar"><span class="who">paper-run</span><span class="track"><span class="fill f-pr" style="width:43%"></span><span class="val" style="--w:43%">10</span></span></div>
+      </div>
+    </div>
+
+    <div class="chart-row">
+      <div class="chart-label">Related Work<span class="sub">518 / 267 / 544 词</span></div>
+      <div class="bars">
+        <div class="bar"><span class="who">GT</span><span class="track"><span class="fill f-gt" style="width:100%"></span><span class="val" style="--w:100%">23</span></span></div>
+        <div class="bar"><span class="who">codex</span><span class="track"><span class="fill f-cx" style="width:70%"></span><span class="val" style="--w:70%">16</span></span></div>
+        <div class="bar"><span class="who">paper-run</span><span class="track"><span class="fill f-pr" style="width:83%"></span><span class="val" style="--w:83%">19</span></span></div>
+      </div>
+    </div>
+
+    <div class="chart-row">
+      <div class="chart-label">Threat model / 目标算法<span class="sub">388 / 195 / 314 词</span></div>
+      <div class="bars">
+        <div class="bar"><span class="who">GT</span><span class="track"><span class="fill f-gt" style="width:17%"></span><span class="val" style="--w:17%">4</span></span></div>
+        <div class="bar"><span class="who">codex</span><span class="track"><span class="fill f-cx" style="width:9%"></span><span class="val" style="--w:9%">2</span></span></div>
+        <div class="bar"><span class="who">paper-run</span><span class="track"><span class="fill f-pr" style="width:1%"></span><span class="val" style="--w:1%">0</span></span></div>
+      </div>
+    </div>
+
+    <div class="chart-row">
+      <div class="chart-label">Method<span class="sub">637 / 447 / 955 词</span></div>
+      <div class="bars">
+        <div class="bar"><span class="who">GT</span><span class="track"><span class="fill f-gt" style="width:17%"></span><span class="val" style="--w:17%">4</span></span></div>
+        <div class="bar"><span class="who">codex</span><span class="track"><span class="fill f-cx" style="width:1%"></span><span class="val" style="--w:1%">0</span></span></div>
+        <div class="bar"><span class="who">paper-run</span><span class="track"><span class="fill f-pr" style="width:9%"></span><span class="val" style="--w:9%">2</span></span></div>
+      </div>
+    </div>
+
+    <div class="chart-row" style="background:var(--stop-soft);margin:0 -.6rem;padding:.6rem;border-radius:3px">
+      <div class="chart-label"><strong>Experiments</strong><span class="sub">1150 / 1068 / <strong style="color:var(--stop)">587</strong> 词</span></div>
+      <div class="bars">
+        <div class="bar"><span class="who">GT</span><span class="track"><span class="fill f-gt" style="width:91%"></span><span class="val" style="--w:91%">21</span></span></div>
+        <div class="bar"><span class="who">codex</span><span class="track"><span class="fill f-cx" style="width:39%"></span><span class="val" style="--w:39%">9</span></span></div>
+        <div class="bar"><span class="who">paper-run</span><span class="track"><span class="fill f-pr" style="width:13%"></span><span class="val" style="--w:13%">3</span></span></div>
+      </div>
+    </div>
+
+    <div class="chart-row">
+      <div class="chart-label">Analysis<span class="sub">1192 / 290 / 601 词</span></div>
+      <div class="bars">
+        <div class="bar"><span class="who">GT</span><span class="track"><span class="fill f-gt" style="width:1%"></span><span class="val" style="--w:1%">0</span></span></div>
+        <div class="bar"><span class="who">codex</span><span class="track"><span class="fill f-cx" style="width:13%"></span><span class="val" style="--w:13%">3</span></span></div>
+        <div class="bar"><span class="who">paper-run</span><span class="track"><span class="fill f-pr" style="width:1%"></span><span class="val" style="--w:1%">0</span></span></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="legend">
+    <span><i class="f-gt"></i>ground truth（43 键）</span>
+    <span><i class="f-cx"></i>codex（26 键，F1 0.725）</span>
+    <span><i class="f-pr"></i>paper-run（22 键，F1 0.615）</span>
+  </div>
+
+  <div class="note key">
+    <span class="label">The gap</span>
+    <p>
+      ground truth 的 <strong>Experiments 是并列第一的引用密集区（21 个唯一键）</strong>。paper-run 在这里只有 3 个——
+      而且这 3 个是 <code>qwen2.5</code>、<code>grattafiori2024llama</code>、<code>olmo20242olmo2furious</code>，
+      <strong>恰好是供给表格 <code>table_jh.tex</code> 的三个行标签</strong>。没有一个来自表格之外。
+    </p>
+    <p>
+      Related Work 那一栏 paper-run 是 19 个，比 codex 的 16 还多。它不缺引用能力，缺的是一个特定位置的引用。
+    </p>
+  </div>
+
+  <p>codex 拿到而 paper-run 漏掉的 9 个键，性质高度一致：</p>
+  <div class="scroll">
+  <table>
+    <caption>codex 命中 / paper-run 漏掉的 ground-truth 引用键</caption>
+    <thead><tr><th>bib key</th><th>是什么</th><th>属于</th></tr></thead>
+    <tbody>
+      <tr><td><span class="m">Clark2018ThinkYH</span></td><td>ARC</td><td>评测基准</td></tr>
+      <tr><td><span class="m">hendrycks2020measuring</span></td><td>MMLU</td><td>评测基准</td></tr>
+      <tr><td><span class="m">zellers2019hellaswag</span></td><td>HellaSwag</td><td>评测基准</td></tr>
+      <tr><td><span class="m">cobbe2021training</span></td><td>GSM8K</td><td>评测基准</td></tr>
+      <tr><td><span class="m">chen2021codex</span></td><td>HumanEval</td><td>评测基准</td></tr>
+      <tr><td><span class="m">lmevalharness</span></td><td>lm-eval-harness</td><td>评测工具</td></tr>
+      <tr><td><span class="m">vllm</span></td><td>vLLM</td><td>部署 / 剪枝引擎</td></tr>
+      <tr><td><span class="m">egashira2025mind</span></td><td>相关攻击工作</td><td>相关工作</td></tr>
+      <tr><td><span class="m">chao2025jailbreaking</span></td><td>相关攻击工作</td><td>相关工作</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>
+    两臂都漏掉的 14 个里，又有 8 个是同一类：<span class="m">gemma2</span>、<span class="m">mistral</span>、
+    <span class="m">guo2025deepseek</span>、<span class="m">DatabricksBlog2023DollyV2</span>、
+    <span class="m">merity2016pointer</span>(WikiText)、<span class="m">raffel2020exploring</span>(C4)、
+    <span class="m">wolf2019huggingface</span>、<span class="m">peng2023instruction</span>。
+  </p>
+
+  <p>
+    <strong>ground truth 的 43 个引用里有二十来个是"实验装置引用"</strong>——你用了哪个 benchmark、哪个 harness、
+    哪些模型、哪个校准集，所以你引它。这类引用不产生于文献综述的阅读，产生于对自己实验流程的如实描述。
+  </p>
+</section>
+
+<!-- ============ 2. ROOT CAUSE ============ -->
+<section>
+  <div class="sec-head"><span class="sec-num">02</span><h2>根因：证据纪律把代码挡在了可写内容之外</h2></div>
+  <p class="sec-sub">我原本以为要给 <code>citation_floor</code> 加一个目标值。查下来不是配额问题。</p>
+
+  <p>决定性的一步检查——这些实体在两篇稿子的正文里出现过吗：</p>
+
+  <div class="scroll">
+  <table>
+    <caption>实体是否被"提到"（不是是否被引用）</caption>
+    <thead><tr>
+      <th>实体</th><th>paper-run 正文提到</th><th>paper-run 引用</th><th>codex 正文提到</th><th>codex 引用</th>
+    </tr></thead>
+    <tbody>
+      <tr class="spot"><td>MMLU / HellaSwag / ARC / GSM8K / HumanEval</td><td class="hi">否</td><td class="hi">否</td><td class="good">是</td><td class="good">是</td></tr>
+      <tr class="spot"><td>vLLM</td><td class="hi">否</td><td class="hi">否</td><td class="good">是</td><td class="good">是</td></tr>
+      <tr class="spot"><td>lm-eval harness</td><td class="hi">否</td><td class="hi">否</td><td class="good">是</td><td class="good">是</td></tr>
+      <tr><td>Qwen2.5 / Llama3.1 / OLMo-2</td><td class="good">是</td><td class="good">是</td><td class="good">是</td><td class="good">是</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="note key">
+    <span class="label">Root cause</span>
+    <p>
+      这些词<strong>在 paper-run 的稿子里根本没出现过</strong>——不是"提到了但忘了引"。它的 Experiments 写的是
+      "benchmark-average accuracy"，因为供给表格 <code>table_jh.tex</code> 的表头字面就是
+      <span class="m">Benchmark Average</span>，没有分项。
+    </p>
+    <p>
+      benchmark 的名字只存在于<strong>代码</strong>里：<code>run_benchmark.py</code> 的
+      <span class="m">--tasks arc_challenge</span> 默认值、<span class="m">INSPECT_TO_LMEVAL = {"mmlu_5_shot": "mmlu"}</span>、
+      <code>misc/inspect_evals/src/inspect_evals/{mmlu,hellaswag}/</code>、<code>vllm_runner.py</code>。
+    </p>
+    <p>
+      <strong>paper-run 读过 <code>run_benchmark.py</code></strong>（它在 full_draft 的 <code>files_read</code> 里），
+      然后没有写。因为 material assessment 的裁定和大纲一起给它划了线——<code>PAPER.md</code> 的 Experiments 那一行
+      写着"All table values and their scope；point estimates rather than statistically significant findings"。
+      它把<strong>供给的表格当成了可写内容的边界</strong>：代码只用来理解方法，没有被授权成为实验装置的事实来源。
+    </p>
+  </div>
+
+  <p>
+    codex 做的正相反：它把 <code>eval.sh</code>、<code>calc_asr.py</code>、<code>run_benchmark.py</code> 当成
+    setup 的一手材料挖出来写进 Experimental Evaluation。
+  </p>
+
+  <p style="font-family:var(--display);font-size:1.12rem;color:var(--ink);border-left:3px solid var(--accent);padding-left:1rem;max-width:var(--measure)">
+    paper-run 引用它的表格行标签；codex 引用它的方法学。
+  </p>
+
+  <h3>最能说明问题的是那条被 defer 掉的 finding</h3>
+  <p>
+    独立审查阶段提了 <span class="m">M1</span>（major）：<em>"overview 说用户用 vLLM 剪枝，但正文只定义并评测了
+    Magnitude、SparseGPT、Wanda"</em>。<strong>它看见了这个缺口。</strong>然后 revision 阶段给出的处置是
+    <span class="m">deferred</span>——理由是"这个不一致烤在供给的位图 teaser 里，需要可编辑的图源"。
+  </p>
+  <div class="note caution">
+    <span class="label">Instinct</span>
+    <p>
+      流水线唯一一次注意到装置缺失，它的本能是<strong>收窄论文</strong>（说明正文没定义 vLLM），
+      而不是<strong>补写装置</strong>（把 vLLM 作为部署引擎写进 Experiments 并引用）。
+      而 <code>assessment.json</code> 自己早在第 2 阶段就记了一句"bib 里有 vLLM 的可用条目"。
+    </p>
+  </div>
+</section>
+
+<!-- ============ 3. COST ============ -->
+<section>
+  <div class="sec-head"><span class="sec-num">03</span><h2>预算去了哪里</h2></div>
+  <p class="sec-sub">900,083 input tokens，134 次 model call，9 个 session；对照 codex 180,700 tokens、29 次工具调用、1 个 session。</p>
+
+  <div class="budget">
+    <div class="seg-row">
+      <div class="cap">paper-run · 900,083 input tokens</div>
+      <div class="segbar">
+        <div class="s-write" style="width:40.4%">写作 364K · 40%</div>
+        <div class="s-rev"   style="width:41.5%">审查 374K · 42%</div>
+        <div class="s-pub"   style="width:5.5%">build 50K</div>
+        <div class="s-bug"   style="width:12.5%">bug 税 113K</div>
+      </div>
+    </div>
+    <div class="seg-row">
+      <div class="cap">codex · 180,700 input tokens（同一比例尺）</div>
+      <div class="segbar" style="width:20.1%">
+        <div class="s-codex" style="width:100%">181K</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="scroll">
+  <table>
+    <caption>逐阶段 input tokens（含重试）</caption>
+    <thead><tr>
+      <th>阶段</th><th class="num">input</th><th class="num">msgs</th><th class="num">cache read</th><th>产出</th>
+    </tr></thead>
+    <tbody>
+      <tr><td>bootstrap</td><td class="num">30,381</td><td class="num">4</td><td class="num">46,592</td><td>记录 73 份供给输入</td></tr>
+      <tr><td>material_assessment</td><td class="num">73,008</td><td class="num">8</td><td class="num">251,136</td><td>verdict = partial</td></tr>
+      <tr><td>paper_plan</td><td class="num">82,729</td><td class="num">8</td><td class="num">221,696</td><td>8 节大纲 + 职责表</td></tr>
+      <tr><td>full_draft ×2</td><td class="num">177,872</td><td class="num">38 / 51</td><td class="num hi">4,352,000</td><td>全部正文；第 1 次被下限拦下</td></tr>
+      <tr><td>evidence_reconciliation</td><td class="num">84,910</td><td class="num">7</td><td class="num">187,392</td><td>claim-evidence bindings</td></tr>
+      <tr class="spot"><td>self_review</td><td class="num">108,706</td><td class="num">19</td><td class="num">1,059,840</td><td rowspan="3" style="vertical-align:middle">合计 <strong>289K</strong> → 4 条 finding：<br>2 处 caption 改写、删掉一个 TODO 占位附录、1 条 defer</td></tr>
+      <tr class="spot"><td>independent_review</td><td class="num">83,871</td><td class="num">9</td><td class="num">353,408</td></tr>
+      <tr class="spot"><td>revision</td><td class="num">96,035</td><td class="num">8</td><td class="num">181,760</td></tr>
+      <tr><td>publication_build ×3</td><td class="num">77,717</td><td class="num">8/14/23</td><td class="num">842,752</td><td>卡住（#27）</td></tr>
+    </tbody>
+    <tfoot><tr><td>合计</td><td class="num">900,083</td><td class="num">—</td><td class="num">8,335,232</td><td>去掉 113K bug 税后仍是 baseline 的 4.4×</td></tr></tfoot>
+  </table>
+  </div>
+
+  <div class="note caution">
+    <span class="label">ROI</span>
+    <p>
+      <strong>审查段吃掉 42% 的预算，产出全是字面级修改</strong>，而且它没看出真正扣分的东西——
+      Experiments 只有 3 个引用、benchmark 一个没提。因为审查的定义是<strong>内部一致性</strong>
+      （正文与图表是否自洽），不是<strong>领域符合度</strong>（一篇 ICLR 论文的 Setup 该长什么样）。
+    </p>
+  </div>
+
+  <p>
+    另外两处需要如实说明：<strong>98 分钟 wall clock 里有 72 分钟是我在调 <code>inputs_unmodified</code> 那个误报</strong>
+    （08:03 卡住，09:15 恢复）。模型实际 turn 时间 28.9 分钟，端到端约 26 分钟 vs codex 的 9 分钟——是 3×，不是 11×。
+    <span class="m">bug 税 113K</span> 同样是这个误报（3 次重试）加 publication_build 的 2 次重试。
+  </p>
+</section>
+
+<!-- ============ 4. TRAJECTORIES ============ -->
+<section>
+  <div class="sec-head"><span class="sec-num">04</span><h2>两条轨迹并排</h2></div>
+  <p class="sec-sub">同样的材料，两种截然不同的工作方式。步骤编号是真实顺序。</p>
+
+  <div class="tracks">
+    <div class="track">
+      <h4><i style="background:var(--caution)"></i>codex · 单趟</h4>
+      <p class="tmeta">29 次工具调用 · 1 个 session · 9 分钟 · 180,700 tokens</p>
+      <ol class="steps">
+        <li>一条 bash 串读 <span class="m">sed -n '1,240p'</span> 若干文件：AGENTS、template、overview
+          <span class="why">6 次 exec 覆盖约 40 个文件，每次一个 round trip</span></li>
+        <li>批量读 tables + 代码：<code>eval.sh</code>、<code>run_benchmark.py</code>、<code>calc_asr.py</code>、configs
+          <span class="why">把代码当作 setup 的一手材料</span></li>
+        <li class="win">采样式读 references.bib：<span class="m">rg '^@(article|...)' | head -100</span> 再按行号跳读 26 段
+          <span class="why">不整本读，也不放弃——52 条里定位到 26 条可用</span></li>
+        <li>一次写出完整 main.tex（自包含，含模板导言区）</li>
+        <li><code>latexmk</code> → 失败 → 补 <span class="m">.sty/.bst</span> → 重编译</li>
+        <li class="win"><code>pdftoppm</code> 渲染成 PNG → <strong>看这 9 页</strong> → 发现是 10 页
+          <span class="why">用成品做反馈，不用代理指标</span></li>
+        <li>调版式、重编译 → 9 页 → 校验 bib 逐字节一致、三张图都在</li>
+      </ol>
+    </div>
+
+    <div class="track">
+      <h4><i style="background:var(--accent)"></i>paper-run · 十阶段</h4>
+      <p class="tmeta">134 次 model call · 9 个 session · 28.9 分钟 turn · 900,083 tokens</p>
+      <ol class="steps">
+        <li>bootstrap：记录 73 份供给输入并建立基线</li>
+        <li>material_assessment：verdict = <span class="m">partial</span>（overview 说 5 个模型，表格只有 3 个）</li>
+        <li>paper_plan：八节大纲 + 职责表
+          <span class="why">Experiments 那行只说"呈现表格数值与范围"，没有装置描述的职责</span></li>
+        <li class="flag">full_draft：8 个 section turn，逐个文件读（2.84 文件 / call）
+          <span class="why">42 次调用挤在一个 session → 4.3M cache read，占全部的 52%</span></li>
+        <li class="win">下限拦截：2,765 词 &lt; 3,465、三张图一张没放 → 打回重做
+          <span class="why">这一拦是对的，且是在真实运行中抓到的</span></li>
+        <li class="flag">evidence_reconciliation：被 <code>inputs_unmodified</code> 误报挡了 3 次
+          <span class="why">已修（dbdacee）并钉了测试</span></li>
+        <li class="flag">self / independent review + revision：289K tokens → 4 条 finding
+          <span class="why">2 处 caption、1 个占位附录、1 条 defer；没看见 Experiments 的装置缺口</span></li>
+        <li class="flag">publication_build：四变体发布构建失败，卡在 candidate 之前
+          <span class="why">导出的 submission 本身按 verifier 流程重编译干净，10 页</span></li>
+      </ol>
+    </div>
+  </div>
+
+  <div class="note win">
+    <span class="label">paper-run 赢的地方</span>
+    <p>
+      别只看输的部分。prose quality 用 harness 自己的检查器（中立第三方）跑：
+      <strong>paper-run 2 个 issue、0 个 em-dash</strong>；codex 3 个，含 <span class="m">formulaic_structure</span>
+      和 2 个 em-dash。humanization 那套技能是在起作用的。Analysis 一节 paper-run 601 词、codex 290 词，
+      ground truth 是 1192——这一节 paper-run 明显更接近。三张供给图两臂都放全了。
+    </p>
+  </div>
+</section>
+
+<!-- ============ 5. FIXES ============ -->
+<section>
+  <div class="sec-head"><span class="sec-num">05</span><h2>据此要做的四件事</h2></div>
+  <p class="sec-sub">按杠杆排序。第 1 条是唯一直接打在 recall 0.465 上的。</p>
+
+  <div class="fixes">
+    <div class="fix">
+      <span class="rank">Lever 1 · 质量</span>
+      <h4>给"实验装置"一条独立的证据通道</h4>
+      <p>
+        让 <code>paper_plan</code> 从代码与配置里抽一份 setup 清单——模型、benchmark、harness、校准集、部署引擎——
+        写进 <code>EXPERIMENTS.md</code>，drafting 的 Experiments 必须消费它。
+      </p>
+      <p>
+        可机械校验：清单里每个实体，若 bib 中存在对应键，正文必须命名并引用。
+      </p>
+      <p class="target">预期拿回 9 个漏引中的 7 个，并补上 Experiments 那 ~500 词的缺口。</p>
+    </div>
+
+    <div class="fix">
+      <span class="rank">Lever 2 · 成本</span>
+      <h4>砍审查段，或让它改考领域符合度</h4>
+      <p>
+        42% 预算换 4 条字面 finding 不划算。要么把 self_review 折进 full_draft 的重试循环，
+        要么给 independent_review 换一份"这一节该有什么"的检查表。
+      </p>
+      <p>
+        "GT 的 Experiments 有 21 个引用"这件事是可以先验地告诉它的。
+      </p>
+      <p class="target">目标：把 374K 压到 150K 以内，同时让审查能发现结构性缺失。</p>
+    </div>
+
+    <div class="fix">
+      <span class="rank">Lever 3 · 质量 + 解阻塞</span>
+      <h4>把「编译—看—改」循环搬进 drafting</h4>
+      <p>
+        页数是真预算，词数只是代理。一次 build + <code>pdfinfo</code> 就能让 full_draft 知道自己是 10 页还是 7 页，
+        而不是靠 <span class="m">0.7 × pages × 550</span> 估。
+      </p>
+      <p class="target">顺带解掉 <a href="https://github.com/a-green-hand-jack/paper-run/issues/27">#27</a>——
+      publication_build 是目前唯一挡住 candidate tag 的东西。</p>
+    </div>
+
+    <div class="fix">
+      <span class="rank">Lever 4 · 成本</span>
+      <h4>批量读</h4>
+      <p>
+        2.84 文件 / model call 让 transcript 线性增长、session 内成本近似平方增长；
+        codex 一条 bash 读十几个文件。
+      </p>
+      <p class="target">提示层面即可改；主要收益在 full_draft 那 4.3M cache read。</p>
+    </div>
+  </div>
+
+  <div class="note">
+    <p>
+      <strong>一句话总结这次评测教会我们的事：</strong>上一轮修好的是<em>性质上的失败</em>——流水线分不清一篇论文和一个片段。
+      这一轮暴露的是<em>视野上的失败</em>——它能把给它的表格写得一丝不苟，但一篇论文的实验章节有一半内容
+      不在表格里，在代码里。它读到了，却没被授权去写。
+    </p>
+  </div>
+</section>
+
+<footer>
+  <p>
+    数据来源：<code>runs/paperrun/repo/.paper-run/performance.json</code>（逐阶段遥测）、
+    <code>logs/baseline.log</code>（codex 完整轨迹）、两臂 submission 与 ground-truth <code>main.tex</code> 的
+    section 级解析。ground truth 仅用于评分，在两臂运行结束后才取，从未进入任何写作工作区。
+  </p>
+  <p>
+    paper-run <span class="m">dbdacee</span> · agent-writing-harness <span class="m">v0.3.1</span> ·
+    Paper-Writing-Exam <span class="m">paperwrite-bench-short / pwb-0011</span> ·
+    issue <a href="https://github.com/a-green-hand-jack/paper-run/issues/31">#31</a>
+  </p>
+</footer>
+
+</div>
